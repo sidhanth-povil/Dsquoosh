@@ -39,7 +39,7 @@ used, and "Original vaulted: Yes" when Keep Original was on. Unprocessed
 attachments get no row at all — nothing collapses, nothing is editable. The
 same metrics are exposed to the media model (`wp_prepare_attachment_for_js`)
 as `attachment.get( 'dsWebp' )` = `{ origSize, quality, vaulted }` for any
-future admin JS. The "re-Squoosh in place" button stays a v2 idea.
+future admin JS.
 
 ## Install on a Hostinger site
 

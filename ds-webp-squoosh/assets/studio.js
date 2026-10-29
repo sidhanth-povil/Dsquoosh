@@ -329,14 +329,9 @@
 		// Re-entrant stop on an already-stopped plupload queue is harmless.
 		up.stop();
 
-		// Per-queue batch tracking (NOT a one-shot boolean): a batch added while
-		// a previous one is still encoding must also be converted — the old
-		// `_dsProcessing` guard dropped it and resumed the queue mid-encode, so
-		// its files uploaded as originals. Each batch registers itself here; the
-		// LAST batch to finish is the one that resumes the queue.
-		if (!up._dsBatches) up._dsBatches = new Set();
-		const batch = {}; // identity token for this invocation's lifecycle
-		up._dsBatches.add(batch);
+		// Batch counter, not a one-shot boolean: a batch added while another is
+		// still encoding must convert too, and only the last finisher resumes.
+		up._dsBatches = (up._dsBatches || 0) + 1;
 
 		try {
 			for (const plFile of targets) {
@@ -346,9 +341,8 @@
 				try {
 					const webpFile = await toWebpFile(rawFile, state.quality);
 					if (webpFile) {
-						// Snapshot the Keep Original decision NOW: the queue may sit
-						// before its upload starts, and the FileUploaded handler must
-						// use the choice made at queue time, not the current toggle.
+						// Snapshot the Keep-Original decision at queue time: a mid-batch
+						// toggle flip must not change it.
 						if (state.keepOriginal && webpFile._dsOrigSize !== webpFile.size) {
 							webpFile._dsKeepBackup = true;
 							webpFile._dsRawBackup = rawFile;
@@ -365,10 +359,9 @@
 				}
 			}
 		} finally {
-			up._dsBatches.delete(batch);
-			// Resume only when no batch is still converting. A batch that arrived
-		// mid-encode must leave the queue paused until its own re-adds complete.
-			if (up._dsBatches.size === 0) up.start();
+			// Resume only when the final batch finishes — a batch that arrived
+		// mid-encode keeps the queue paused until its own re-adds complete.
+			if (0 === --up._dsBatches) up.start();
 		}
 	}
 
@@ -396,24 +389,18 @@
 		up._dsBound = true;
 
 		up.bind('FilesAdded', (up2, addedFiles) => {
-			// Per addFile's source (wp-includes/js/plupload/plupload.min.js), the
-			// wrapper handed to every uploader event is built fresh from the native
-			// file and copies none of its custom properties — stamp them onto the
-			// wrapper here, keyed off the staging slots we set on the native. This
-			// fires for the re-entrant addFile() of each converted file, before its
-			// upload can start, and registers the vault backup under the wrapper's
-			// plupload file id. One-shot: the staging slot is cleared once copied.
+			// plupload's addFile builds each queue wrapper fresh and copies none of
+			// the native File's custom properties, so stamp our staging slots onto
+			// the wrapper here (one FilesAdded per re-entrant addFile of a converted
+			// file, before its upload can start).
 			addedFiles.forEach((f) => {
 				const native = getNativeFile(f) || f;
 				if (native._dsProcessed) f._dsProcessed = true;
-				if (native._dsQuality !== undefined && f._dsQuality === undefined) {
+				if (native._dsQuality !== undefined) {
 					f._dsQuality = native._dsQuality;
 					f._dsOrigSize = native._dsOrigSize;
 				}
-				if (native._dsKeepBackup) {
-					pendingBackups.set(f.id, native._dsRawBackup);
-					native._dsKeepBackup = false;
-				}
+				if (native._dsKeepBackup) pendingBackups.set(f.id, native._dsRawBackup);
 			});
 			void processAddedFiles(up2, addedFiles);
 		});
@@ -430,9 +417,8 @@
 		});
 
 		up.bind('FileUploaded', (up2, file, res) => {
-			// Keyed by the plupload file id, and NO re-read of state.keepOriginal:
-			// the keep/skip decision was snapshotted on the native when the file
-			// was queued (two same-named files in one batch must not collide).
+			// The queue-time snapshot decides (keyed by plupload file id) — no
+			// re-read of the current toggle.
 			const rawFile = pendingBackups.get(file.id);
 			if (!rawFile) return;
 			pendingBackups.delete(file.id);

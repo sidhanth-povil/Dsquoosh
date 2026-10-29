@@ -165,8 +165,7 @@
 	}
 }
 
-/* Attachment-details panel (media modal sidebar + edit-attachment page).
-   Rendered as a read-only compat row: no <input>, nothing saved back. */
+/* Attachment-details panel: read-only compat row, nothing saved back. */
 .ds-webp-details {
 	display: flex;
 	align-items: baseline;
@@ -176,11 +175,11 @@
 	font-size: 12px;
 }
 
-.ds-webp-details .ds-webp-details__size {
+.ds-webp-details__size {
 	font-variant-numeric: tabular-nums;
 }
 
-.ds-webp-details .ds-webp-details__vault {
+.ds-webp-details__vault {
 	color: #00a32a;
 	font-weight: 400;
 }

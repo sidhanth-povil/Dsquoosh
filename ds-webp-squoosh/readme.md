@@ -50,11 +50,19 @@ future admin JS.
    
    FileZilla path: `public_html/wp-content/mu-plugins/ds-webp-squoosh/`
    
-2. Verify: open wp-admin → Media Library → Add New. A blue **"DS WebP"** bar
+2. **This step is required** (WordPress only auto-loads `.php` files directly
+   in `mu-plugins/`, never inside subfolders — it would silently ignore the
+   whole folder otherwise): also copy the included
+   **`ds-webp-squoosh-loader.php`** file up one level, directly into
+   `mu-plugins/` (next to the `ds-webp-squoosh/` folder, not inside it).
+   
+3. Verify: open wp-admin → Media Library → Add New. A blue **"DS WebP"** bar
    with sliders and checkboxes appears above the dropzone. Drop a JPEG — the
-   queue shows a `.webp` entry and uploads it.
+   queue shows a `.webp` entry and uploads it. **If the bar is missing, the
+   plugin is not loading yet — don't test file uploads until it shows.**
 
-That's it. Repeat the upload step on each of your sites.
+That's it. Repeat both upload steps on each of your sites (the loader file
+goes to `mu-plugins` root, the folder next to it).
 
 ## Admin notes
 
@@ -68,9 +76,11 @@ That's it. Repeat the upload step on each of your sites.
 - To *load* a vaulted original later (for a future "re-Squoosh" step), grab it
   with SFTP from the vault path shown in the attachment's postmeta; the vault
   is directly blocked by `.htaccess` for security.
-- Upgrading/uninstalling: replace the folder (update) or delete it; vaulted
-  originals remain on disk (they are your backups by design) but lose admin
-  visibility — remove `uploads/ds-originals/` manually once you're done.
+- Upgrading/uninstalling: replace the folder **and** keep the loader file in
+  place (either one missing and the load silently does nothing). To fully
+  uninstall: delete both; vaulted originals remain on disk (they are your
+  backups by design) but lose admin visibility — remove
+  `uploads/ds-originals/` manually once you're done.
 
 ## Developer notes
 

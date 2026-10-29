@@ -326,9 +326,17 @@
 		if (!targets.length) return;
 
 		// Stop the queue synchronously so nothing uploads before conversion.
+		// Re-entrant stop on an already-stopped plupload queue is harmless.
 		up.stop();
-		if (up._dsProcessing) { up.start(); return; }
-		up._dsProcessing = true;
+
+		// Per-queue batch tracking (NOT a one-shot boolean): a batch added while
+		// a previous one is still encoding must also be converted — the old
+		// `_dsProcessing` guard dropped it and resumed the queue mid-encode, so
+		// its files uploaded as originals. Each batch registers itself here; the
+		// LAST batch to finish is the one that resumes the queue.
+		if (!up._dsBatches) up._dsBatches = new Set();
+		const batch = {}; // identity token for this invocation's lifecycle
+		up._dsBatches.add(batch);
 
 		try {
 			for (const plFile of targets) {
@@ -357,8 +365,10 @@
 				}
 			}
 		} finally {
-			up._dsProcessing = false;
-			up.start();
+			up._dsBatches.delete(batch);
+			// Resume only when no batch is still converting. A batch that arrived
+		// mid-encode must leave the queue paused until its own re-adds complete.
+			if (up._dsBatches.size === 0) up.start();
 		}
 	}
 

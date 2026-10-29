@@ -1,0 +1,213 @@
+<?php
+/**
+ * Plugin Name: DS WebP Squoosh Studio
+ * Description: Zero-server-load client-side WebP converter (Squoosh's libwebp WASM) for the WP admin. JPEG/PNG uploads are converted in the browser to WebP (quality 82% default, 2460px max edge) before they ever reach the server.
+ * Version:     1.0.0
+ * Author:      DesignSuite Studio
+ * License:     GPL-2.0-or-later
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+final class DS_WebP_Squoosh_Studio {
+
+	const VERSION = '1.0.0';
+
+	/**
+	 * ---- SETTINGS (edit here; or override via the filters shown) ----------
+	 */
+	const DEFAULT_QUALITY   = 82;    // WebP quality 1-100, slider default.
+	const MAX_DIM           = 2460;  // Downscale when the longest edge exceeds this.
+	const KEEP_ORIGINAL     = false; // Default for the per-upload "Keep Original" toggle.
+	const VAULT_FOLDER      = 'ds-originals';
+	const BACKUP_MAX_BYTES  = 20971520; // 20 MB cap per vaulted original. (`ds_webp_backup_max_bytes` filter)
+	const AJAX_ACTION       = 'ds_save_original_backup';
+
+	private $vault_token = null;
+
+	public function __construct() {
+		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_studio_assets' ] );
+		add_action( 'elementor/editor/before_enqueue_scripts', [ $this, 'enqueue_studio_assets' ] );
+		add_action( 'add_attachment', [ $this, 'save_compression_metadata' ] );
+		add_action( 'wp_ajax_' . self::AJAX_ACTION, [ $this, 'ajax_save_original_backup' ] );
+		add_action( 'delete_attachment', [ $this, 'cleanup_original_backup' ] );
+	}
+
+	/**
+	 * Enqueue studio.js (ES module) + inline config, admin only, uploaders only.
+	 */
+	public function enqueue_studio_assets() {
+		if ( ! current_user_can( 'upload_files' ) ) {
+			return;
+		}
+
+		$base_url = plugin_dir_url( __FILE__ ) . 'assets/';
+
+		$config = wp_json_encode(
+			[
+				'ajaxUrl'        => admin_url( 'admin-ajax.php' ),
+				'nonce'          => wp_create_nonce( 'ds_webp_squoosh_nonce' ),
+				'defaultQuality' => (int) apply_filters( 'ds_webp_default_quality', self::DEFAULT_QUALITY ),
+				'maxDim'         => (int) apply_filters( 'ds_webp_max_dim', self::MAX_DIM ),
+				'defaultBackup'  => (bool) apply_filters( 'ds_webp_keep_original', self::KEEP_ORIGINAL ),
+				'maxBackupBytes' => (int) apply_filters( 'ds_webp_backup_max_bytes', self::BACKUP_MAX_BYTES ),
+			]
+		);
+
+		$inline = "window.DSWebPConfig = {$config};";
+
+		if ( function_exists( 'wp_enqueue_script_module' ) ) {
+			// WP 6.5+: native script-module loading.
+			wp_enqueue_script_module( 'ds-webp-squoosh', $base_url . 'studio.js', [], self::VERSION );
+		} else {
+			// Pre-6.5 fallback: classic handle printed as a module via script_loader_tag.
+			wp_enqueue_script( 'ds-webp-squoosh', $base_url . 'studio.js', [ 'wp-plupload', 'media-editor' ], self::VERSION, true );
+			add_filter( 'script_loader_tag', [ $this, 'force_module_type' ], 10, 2 );
+		}
+
+		wp_print_inline_script_tag( $inline );
+		wp_enqueue_style( 'ds-webp-squoosh-studio', $base_url . 'studio.css', [], self::VERSION );
+	}
+
+	public function force_module_type( $tag, $handle ) {
+		if ( 'ds-webp-squoosh' === $handle ) {
+			$tag = str_replace( '<script ', '<script type="module" ', $tag );
+		}
+		return $tag;
+	}
+
+	/**
+	 * Persist quality + original size sent along with the uploader request
+	 * (only for files our JS intercepted).
+	 */
+	public function save_compression_metadata( $attachment_id ) {
+		if ( isset( $_REQUEST['_ds_webp_quality'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			update_post_meta( $attachment_id, '_ds_webp_quality', min( 100, max( 1, absint( $_REQUEST['_ds_webp_quality'] ) ) ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		}
+		if ( isset( $_REQUEST['_ds_orig_size'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			update_post_meta( $attachment_id, '_ds_orig_size', absint( $_REQUEST['_ds_orig_size'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		}
+	}
+
+	/**
+	 * Vault an untouched original (Keep Original toggle) under
+	 * /uploads/ds-originals/{site-token}/YYYY/MM/ and link it via post meta.
+	 */
+	public function ajax_save_original_backup() {
+		check_ajax_referer( 'ds_webp_squoosh_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'upload_files' ) ) {
+			wp_send_json_error( [ 'message' => 'Insufficient permissions.' ], 403 );
+		}
+
+		$attachment_id = isset( $_POST['attachment_id'] ) ? absint( $_POST['attachment_id'] ) : 0;
+		if ( ! $attachment_id || empty( $_FILES['original_file'] ) || ! is_array( $_FILES['original_file'] ) ) {
+			wp_send_json_error( [ 'message' => 'Missing attachment ID or file payload.' ], 400 );
+		}
+
+		$file = $_FILES['original_file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+
+		if ( ! empty( $file['error'] ) || UPLOAD_ERR_OK !== (int) $file['error'] ) {
+			wp_send_json_error( [ 'message' => 'Upload error code ' . (int) $file['error'] . '.' ], 400 );
+		}
+		if ( ! is_uploaded_file( $file['tmp_name'] ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+			wp_send_json_error( [ 'message' => 'Invalid upload payload.' ], 400 );
+		}
+		if ( (int) $file['size'] > self::BACKUP_MAX_BYTES ) {
+			wp_send_json_error( [ 'message' => 'Original exceeds the backup size cap.' ], 413 );
+		}
+		if ( is_multisite() && wp_is_large_network() && ! is_super_admin() ) {
+			wp_send_json_error( [ 'message' => 'Backup disabled on large networks.' ], 403 );
+		}
+
+		// Whitelist: only real JPEG/PNG originals belong in the vault.
+		$ext = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) );
+		if ( ! in_array( $ext, [ 'jpg', 'jpeg', 'png' ], true ) ) {
+			wp_send_json_error( [ 'message' => 'Only JPEG/PNG originals can be vaulted.' ], 415 );
+		}
+
+		$upload_dir = wp_upload_dir();
+		$vault_dir  = trailingslashit( $upload_dir['basedir'] ) . self::VAULT_FOLDER;
+		$target_dir = trailingslashit( $vault_dir ) . $this->get_vault_token() . $upload_dir['subdir'];
+
+		if ( ! wp_mkdir_p( $target_dir ) ) {
+			wp_send_json_error( [ 'message' => 'Could not create vault directory.' ], 500 );
+		}
+		$this->secure_vault_directory( $vault_dir );
+
+		$raw_name    = sanitize_file_name( $file['name'] );
+		$unique_name = wp_unique_filename( $target_dir, $raw_name );
+		$target_path = trailingslashit( $target_dir ) . $unique_name;
+
+		if ( ! @move_uploaded_file( $file['tmp_name'], $target_path ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+			wp_send_json_error( [ 'message' => 'Failed to write original file to vault.' ], 500 );
+		}
+		@chmod( $target_path, FS_CHMOD_FILE );
+
+		// Cheap integrity check after the move: file must still decode as an image.
+		if ( function_exists( 'getimagesize' ) ) {
+			$check = @getimagesize( $target_path );
+			if ( ! $check || empty( $check['mime'] ) || ! in_array( $check['mime'], [ 'image/jpeg', 'image/png' ], true ) ) {
+				wp_delete_file( $target_path );
+				wp_send_json_error( [ 'message' => 'Payload is not a valid JPEG/PNG image.' ], 415 );
+			}
+		}
+
+		$relative = ltrim( str_replace( trailingslashit( $upload_dir['basedir'] ), '', $target_path ), '/' );
+		update_post_meta( $attachment_id, '_ds_original_backup', $relative );
+
+		wp_send_json_success( [ 'backup_path' => $relative ] );
+	}
+
+	/** Removes the vaulted original when its WebP attachment is deleted. */
+	public function cleanup_original_backup( $attachment_id ) {
+		$relative = get_post_meta( $attachment_id, '_ds_original_backup', true );
+		if ( ! $relative ) {
+			return;
+		}
+
+		$upload_dir = wp_upload_dir();
+		$full_path  = trailingslashit( $upload_dir['basedir'] ) . ltrim( (string) $relative, '/' );
+		$vault_base = realpath( trailingslashit( $upload_dir['basedir'] ) . self::VAULT_FOLDER );
+		$real       = realpath( $full_path );
+
+		// Never delete outside the vault (path traversal guard).
+		if ( $real && $vault_base && 0 === strpos( $real, trailingslashit( $vault_base ) ) && file_exists( $real ) ) {
+			wp_delete_file( $real );
+		}
+		delete_post_meta( $attachment_id, '_ds_original_backup' );
+	}
+
+	/** Per-site random token so vault URLs cannot be guessed. */
+	private function get_vault_token() {
+		if ( null === $this->vault_token ) {
+			$this->vault_token = get_option( 'ds_webp_vault_token' );
+			if ( ! is_string( $this->vault_token ) || 16 !== strlen( $this->vault_token ) ) {
+				$this->vault_token = substr( bin2hex( random_bytes( 8 ) ), 0, 16 );
+				update_option( 'ds_webp_vault_token', $this->vault_token );
+			}
+		}
+		return trailingslashit( $this->vault_token );
+	}
+
+	/** Apache/LiteSpeed hardening (Hostinger) + no directory listing. */
+	private function secure_vault_directory( $vault_root ) {
+		$index_file    = trailingslashit( $vault_root ) . 'index.php';
+		$htaccess_file = trailingslashit( $vault_root ) . '.htaccess';
+
+		if ( ! file_exists( $index_file ) ) {
+			@file_put_contents( $index_file, "<?php\n// Silence is golden.\n" ); // phpcs:ignore
+		}
+		if ( ! file_exists( $htaccess_file ) ) {
+			$rules  = "# DS WebP Squoosh vault - deny direct access\n";
+			$rules .= "Options -Indexes\n";
+			$rules .= "<IfModule mod_authz_core.c>\n\tRequire all denied\n</IfModule>\n";
+			$rules .= "<IfModule !mod_authz_core.c>\n\tOrder allow,deny\n\tDeny from all\n</IfModule>\n";
+			@file_put_contents( $htaccess_file, $rules ); // phpcs:ignore
+		}
+	}
+}
+
+new DS_WebP_Squoosh_Studio();

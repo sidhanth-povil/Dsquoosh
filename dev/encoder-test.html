@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>DS WebP encoder test</title>
+<style>body{font:13px/1.5 monospace;padding:20px} .ok{color:#0a0}.fail{color:#c00} img{max-width:220px;border:1px solid #ddd}</style>
+</head>
+<body>
+<h3>DS WebP Squoosh — vendored encoder test</h3>
+<div id="out">running…</div>
+<div id="imgs"></div>
+<script type="module">
+const out = document.getElementById('out');
+const log = (msg, cls='') => { const d = document.createElement('div'); d.textContent = msg; d.className = cls; out.appendChild(d); };
+function pass(name){ log('PASS ' + name, 'ok'); } function fail(name, e){ console.error(name, e); log('FAIL ' + name + ' — ' + (e && e.message || e), 'fail'); }
+
+try {
+  const { encode, init } = await import('../ds-webp-squoosh/assets/vendor/@jsquash/webp/index.js');
+
+  // 1. Opaque synthetic image 1200x800 gradient
+  const c = document.createElement('canvas'); c.width = 1200; c.height = 800;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0,0,1200,800);
+  g.addColorStop(0,'#123456'); g.addColorStop(1,'#fedcba');
+  ctx.fillStyle = g; ctx.fillRect(0,0,1200,800);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 48px sans-serif'; ctx.fillText('DS WebP Squoosh', 40, 120);
+  const imageData = ctx.getImageData(0,0,1200,800);
+
+  const t0 = performance.now();
+  const buf82 = await encode(imageData, { quality: 82, method: 4 });
+  const blob82 = new Blob([buf82], { type: 'image/webp' });
+  const ms = Math.round(performance.now() - t0);
+  pass(`opaque 1200x800 → ${blob82.size} bytes webp in ${ms}ms (first encode incl. WASM init)`);
+
+  const bytes = new Uint8Array(buf82.slice(0, 16));
+  const magic = String.fromCharCode(...bytes.slice(0,4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8,12)) === 'WEBP';
+  if (!magic) throw new Error('bad webp magic bytes');
+  pass('RIFF....WEBP magic bytes verified');
+
+  const buf30 = await encode(imageData, { quality: 30, method: 4 });
+  if (new Blob([buf30]).size >= blob82.size) throw new Error('q30 not smaller than q82');
+  pass(`quality slider direction: q30 (${new Blob([buf30]).size}B) < q82 (${blob82.size}B)`);
+  document.getElementById('imgs').innerHTML = `<img src="${URL.createObjectURL(blob82)}" alt="webp">`;
+
+  // 2. Transparency preservation test
+  const t = document.createElement('canvas'); t.width = 200; t.height = 200;
+  const tctx = t.getContext('2d');
+  tctx.fillStyle = 'rgba(255,0,0,0)'; tctx.fillRect(0,0,100,100);   // fully transparent area
+  tctx.fillStyle = '#204060'; tctx.fillRect(100,0,100,200); tctx.fillRect(0,100,200,100);
+  const tBlob = new Blob([await encode(tctx.getImageData(0,0,200,200), { quality: 82 })], { type:'image/webp' });
+  const bmp = await createImageBitmap(tBlob);
+  const tc = document.createElement('canvas'); tc.width = 200; tc.height = 200;
+  const tcx = tc.getContext('2d'); tcx.drawImage(bmp, 0, 0); bmp.close();
+  const alpha = tcx.getImageData(20, 20, 1, 1).data[3];
+  if (alpha === 255) throw new Error('transparency lost (alpha=255 in source-transparent area)');
+  pass(`alpha preserved (source-transparent area decoded alpha=${alpha})`);
+  document.getElementById('imgs').innerHTML += `<img src="${URL.createObjectURL(tBlob)}" alt="transparent webp">`;
+
+  // 3. Downscale path used by studio.js
+  await createImageBitmap(blob82).then(b => b.close());
+  log('createImageBitmap on encoded webp OK →', 'ok');
+  log('ALL TESTS PASSED ✔', 'ok');
+} catch (e) {
+  fail('encoder test', e);
+}
+</script>
+</body>
+</html>

@@ -164,3 +164,29 @@
 		height: 180px;
 	}
 }
+
+/* Attachment-details panel (media modal sidebar + edit-attachment page).
+   Rendered as a read-only compat row: no <input>, nothing saved back. */
+.ds-webp-details {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	color: #2271b1;
+	font-weight: 600;
+	font-size: 12px;
+}
+
+.ds-webp-details .ds-webp-details__size {
+	font-variant-numeric: tabular-nums;
+}
+
+.ds-webp-details .ds-webp-details__vault {
+	color: #00a32a;
+	font-weight: 400;
+}
+
+@media (max-width: 640px) {
+	.ds-webp-details {
+		flex-wrap: wrap;
+	}
+}

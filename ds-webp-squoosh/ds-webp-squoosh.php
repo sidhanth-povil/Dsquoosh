@@ -179,9 +179,10 @@ final class DS_WebP_Squoosh_Studio {
 			return $form_fields;
 		}
 
-		$quality   = get_post_meta( $post->ID, '_ds_webp_quality', true );
-		$orig_size = get_post_meta( $post->ID, '_ds_orig_size', true );
-		$vaulted   = get_post_meta( $post->ID, '_ds_original_backup', true );
+		$ds        = $this->get_ds_meta( $post->ID );
+		$quality   = $ds['quality'];
+		$orig_size = $ds['orig_size'];
+		$vaulted   = $ds['vaulted'];
 
 		if ( ! $quality && ! $orig_size && ! $vaulted ) {
 			return $form_fields;
@@ -215,6 +216,27 @@ final class DS_WebP_Squoosh_Studio {
 		];
 
 		return $form_fields;
+	}
+
+	/**
+	 * All compression meta keys in one cached read. `get_post_meta( $id )` without
+	 * a key fetches every meta row for the attachment in a single query; the
+	 * per-key three-call variant costs one uncached query each. This hook runs
+	 * per attachment (the media library grid, via wp_prepare_attachment_for_js).
+	 *
+	 * @return array<string, int|string> Keys: quality, orig_size, vaulted.
+	 */
+	private function get_ds_meta( $attachment_id ) {
+		$all = get_post_meta( $attachment_id );
+		if ( ! is_array( $all ) ) {
+			return [ 'quality' => 0, 'orig_size' => 0, 'vaulted' => '' ];
+		}
+
+		return [
+			'quality'   => empty( $all['_ds_webp_quality'][0] ) ? 0 : (int) $all['_ds_webp_quality'][0],
+			'orig_size' => empty( $all['_ds_orig_size'][0] ) ? 0 : (int) $all['_ds_orig_size'][0],
+			'vaulted'   => empty( $all['_ds_original_backup'][0] ) ? '' : (string) $all['_ds_original_backup'][0],
+		];
 	}
 
 	/**
@@ -252,14 +274,12 @@ final class DS_WebP_Squoosh_Studio {
 			return $response;
 		}
 
-		$quality   = get_post_meta( $attachment->ID, '_ds_webp_quality', true );
-		$orig_size = get_post_meta( $attachment->ID, '_ds_orig_size', true );
-		$vaulted   = get_post_meta( $attachment->ID, '_ds_original_backup', true );
+		$ds = $this->get_ds_meta( $attachment->ID );
 
-		$response['dswebp'] = [
-			'origSize' => ( $orig_size ? (int) $orig_size : null ),
-			'quality'  => ( $quality ? (int) $quality : null ),
-			'vaulted'  => (bool) $vaulted,
+		$response['dsWebp'] = [
+			'origSize' => $ds['orig_size'] ? $ds['orig_size'] : null,
+			'quality'  => $ds['quality'] ? $ds['quality'] : null,
+			'vaulted'  => (bool) $ds['vaulted'],
 		];
 
 		return $response;

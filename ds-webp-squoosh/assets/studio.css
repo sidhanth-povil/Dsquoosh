@@ -43,6 +43,17 @@
 	font-weight: 600;
 }
 
+.ds-webp-bar__status {
+	font-variant-numeric: tabular-nums;
+	color: #00a32a;
+	white-space: nowrap;
+}
+
+.ds-webp-bar__status.is-warn {
+	color: #b32d2e;
+	font-weight: 600;
+}
+
 .ds-webp-bar__hint {
 	display: inline-flex;
 	align-items: center;

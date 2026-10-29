@@ -36,7 +36,7 @@ final class DS_WebP_Squoosh_Studio {
 
 		// Attachment-details panel (media modal sidebar + edit-attachment page).
 		add_filter( 'attachment_fields_to_edit', [ $this, 'details_panel_fields' ], 10, 2 );
-		add_filter( 'wp_prepare_attachment_for_js', [ $this, 'expose_meta_to_media_model' ], 10, 3 );
+		add_filter( 'wp_prepare_attachment_for_js', [ $this, 'expose_meta_to_media_model' ], 10, 2 );
 	}
 
 	/**
@@ -166,13 +166,10 @@ final class DS_WebP_Squoosh_Studio {
 	}
 
 	/**
-	 * Adds a read-only "DS WebP" row to the media-modal sidebar (AttachmentCompat
-	 * view) and the edit-attachment page. Rendered only for attachments converted
-	 * by this plugin; unprocessed files get no row at all — the panel is fully
-	 * collapsed for them.
-	 *
-	 * The row is raw HTML via the `html` input type, so no <input>/<select> is
-	 * emitted and core's save-compat FormData round-trip stays untouched.
+	 * Read-only "DS WebP" row for the media modal sidebar + edit-attachment page,
+	 * shown only for attachments this plugin converted. Raw `html` input so no
+	 * <input>/<select> is emitted and core's compat FormData round-trip stays
+	 * untouched.
 	 */
 	public function details_panel_fields( $form_fields, $post ) {
 		if ( ! $post instanceof WP_Post ) {
@@ -180,31 +177,38 @@ final class DS_WebP_Squoosh_Studio {
 		}
 
 		$ds        = $this->get_ds_meta( $post->ID );
-		$quality   = $ds['quality'];
 		$orig_size = $ds['orig_size'];
-		$vaulted   = $ds['vaulted'];
 
-		if ( ! $quality && ! $orig_size && ! $vaulted ) {
+		if ( ! $ds['quality'] && ! $orig_size && ! $ds['vaulted'] ) {
 			return $form_fields;
 		}
 
-		$webp_size = $this->get_webp_file_size( $post->ID );
-		$saved_pct = ( $orig_size && $webp_size && $webp_size < $orig_size )
-			? ' · Saved ' . (int) round( ( ( $orig_size - $webp_size ) / $orig_size ) * 100 ) . '%'
-			: '';
+		// Current WebP file size: image metadata carries `filesize` since WP 6.0;
+		// else one stat, skipping the filesystem when metadata has it.
+		$meta      = wp_get_attachment_metadata( $post->ID );
+		$webp_size = is_array( $meta ) && ! empty( $meta['filesize'] ) ? (int) $meta['filesize'] : 0;
+		if ( ! $webp_size ) {
+			$file_path = get_attached_file( $post->ID );
+			$webp_size = ( $file_path && file_exists( $file_path ) )
+				? (int) ( function_exists( 'wp_filesize' ) ? wp_filesize( $file_path ) : filesize( $file_path ) )
+				: 0;
+		}
 
 		$content = '<div class="ds-webp-details" title="Converted in this browser with Squoosh\'s libwebp encoder (DS WebP Squoosh Studio)">';
 
 		if ( $orig_size ) {
-			$content .= '<span class="ds-webp-details__size">Original ' . esc_html( size_format( (int) $orig_size ) ) . '</span>';
+			$content .= '<span class="ds-webp-details__size">Original ' . size_format( $orig_size ) . '</span>';
 			if ( $webp_size ) {
-				$content .= '<span class="ds-webp-details__size"> → ' . esc_html( size_format( $webp_size ) ) . ' WebP' . esc_html( $saved_pct ) . '</span>';
+				$saved_pct = ( $webp_size < $orig_size )
+					? ' · Saved ' . (int) round( ( ( $orig_size - $webp_size ) / $orig_size ) * 100 ) . '%'
+					: '';
+				$content .= '<span class="ds-webp-details__size"> → ' . size_format( $webp_size ) . ' WebP' . $saved_pct . '</span>'; // String built solely from ints + size_format().
 			}
 		}
-		if ( $quality ) {
-			$content .= '<span class="ds-webp-details__quality">Quality ' . (int) $quality . '%</span>';
+		if ( $ds['quality'] ) {
+			$content .= '<span class="ds-webp-details__quality">Quality ' . (int) $ds['quality'] . '%</span>';
 		}
-		if ( $vaulted ) {
+		if ( $ds['vaulted'] ) {
 			$content .= '<span class="ds-webp-details__vault">Original vaulted: Yes</span>';
 		}
 		$content .= '</div>';
@@ -219,12 +223,11 @@ final class DS_WebP_Squoosh_Studio {
 	}
 
 	/**
-	 * All compression meta keys in one cached read. `get_post_meta( $id )` without
-	 * a key fetches every meta row for the attachment in a single query; the
-	 * per-key three-call variant costs one uncached query each. This hook runs
-	 * per attachment (the media library grid, via wp_prepare_attachment_for_js).
+	 * All compression meta in one cached read: get_post_meta( $id ) with no key
+	 * fetches every row in a single query (vs one uncached query per key), and
+	 * both details-panel hooks run per attachment in the library grid.
 	 *
-	 * @return array<string, int|string> Keys: quality, orig_size, vaulted.
+	 * @return array Keys: quality, orig_size (int), vaulted (string).
 	 */
 	private function get_ds_meta( $attachment_id ) {
 		$all = get_post_meta( $attachment_id );
@@ -240,36 +243,10 @@ final class DS_WebP_Squoosh_Studio {
 	}
 
 	/**
-	 * Current (WebP) file size without touching the filesystem when possible:
-	 * image metadata carries `filesize` since WP 6.0; fall back to a single stat.
+	 * Exposes conversion metrics as response['dsWebp'], readable from any admin
+	 * JS via attachment.get( 'dsWebp' ); parameters are the core filter's.
 	 */
-	private function get_webp_file_size( $attachment_id ) {
-		$meta = wp_get_attachment_metadata( $attachment_id );
-		if ( is_array( $meta ) && ! empty( $meta['filesize'] ) ) {
-			return (int) $meta['filesize'];
-		}
-
-		$file_path = get_attached_file( $attachment_id );
-		if ( $file_path && file_exists( $file_path ) ) {
-			return function_exists( 'wp_filesize' ) ? (int) wp_filesize( $file_path ) : (int) filesize( $file_path );
-		}
-
-		return 0;
-	}
-
-	/**
-	 * Exposure end of the chain: `wp_prepare_attachment_for_js` is the payload the
-	 * Backbone `wp.media.model.Attachment` attributes are populated from (via the
-	 * query-attachments Ajax response → `model.parse` → `model.set`), so adding
-	 * `dsWebp` here makes the metrics readable by any admin JS via
-	 * `attachment.get( 'dsWebp' )` — independently of the compat row markup.
-	 *
-	 * @param array                      $response    Prepared attachment data.
-	 * @param WP_Post                    $attachment  Attachment object.
-	 * @param array<string, mixed>|false $meta        Attachment meta, unused here.
-	 * @return array Updated response with a `dsWebp` attribute.
-	 */
-	public function expose_meta_to_media_model( $response, $attachment, $meta ) {
+	public function expose_meta_to_media_model( $response, $attachment ) {
 		if ( ! is_array( $response ) || ! $attachment instanceof WP_Post ) {
 			return $response;
 		}
@@ -277,8 +254,8 @@ final class DS_WebP_Squoosh_Studio {
 		$ds = $this->get_ds_meta( $attachment->ID );
 
 		$response['dsWebp'] = [
-			'origSize' => $ds['orig_size'] ? $ds['orig_size'] : null,
-			'quality'  => $ds['quality'] ? $ds['quality'] : null,
+			'origSize' => $ds['orig_size'] ?: null,
+			'quality'  => $ds['quality'] ?: null,
 			'vaulted'  => (bool) $ds['vaulted'],
 		];
 

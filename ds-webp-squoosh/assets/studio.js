@@ -28,6 +28,7 @@
 	let encoder = null; // Squoosh libwebp encoder, loaded below
 	try {
 		encoder = await import('./vendor/@jsquash/webp/index.js');
+		console.info('[DS WebP Squoosh] encoder ready (Squoosh libwebp WASM).');
 	} catch (err) {
 		console.error('[DS WebP Squoosh] encoder unavailable — uploads will pass through unconverted:', err);
 	}
@@ -44,6 +45,21 @@
 	function formatBytes(bytes) {
 		if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' MB';
 		return Math.max(1, Math.round(bytes / 1024)) + ' KB';
+	}
+
+	/* ------------------------------------------------------------------ *
+	 *  Bar status line (encoder health + live conversion progress)
+	 * ------------------------------------------------------------------ */
+	let dsPending = 0; // files converting across all active batches
+	const dsResults = { ok: 0, fail: 0, saved: 0 };
+
+	function showBarStatus(text, level) {
+		document.querySelectorAll('.ds-webp-bar [data-role=status]').forEach((el) => {
+			el.textContent = text || '';
+			el.classList.toggle('is-warn', level === 'warn');
+		});
+		clearTimeout(showBarStatus.timer);
+		if (text) showBarStatus.timer = setTimeout(() => showBarStatus(''), 15000);
 	}
 
 	/* ------------------------------------------------------------------ *
@@ -130,6 +146,7 @@
 				<input type="checkbox" data-role="inspect" ${state.inspect ? 'checked' : ''} />
 				<span>Preview</span>
 			</label>
+			<span class="ds-webp-bar__status" data-role="status" aria-live="polite"></span>
 			<span class="ds-webp-bar__hint" title="Uses Squoosh's libwebp encoder — all conversion happens in this browser, nothing runs on the server. Images over ${state.maxDim}px on the longest edge are downscaled.">?</span>
 		`;
 
@@ -137,9 +154,15 @@
 			enabled: bar.querySelector('[data-role=enabled]'),
 			quality: bar.querySelector('[data-role=quality]'),
 			qualityLabel: bar.querySelector('[data-role=quality-label]'),
-			keepOriginal: bar.querySelector('[data-role=keep-original]'),
-			inspect: bar.querySelector('[data-role=inspect]'),
-		};
+		keepOriginal: bar.querySelector('[data-role=keep-original]'),
+		inspect: bar.querySelector('[data-role=inspect]'),
+		status: bar.querySelector('[data-role=status]'),
+	};
+
+		if (!encoder) {
+			nodes.status.textContent = '⚠ Encoder failed to load — files upload unconverted.';
+			nodes.status.classList.add('is-warn');
+		}
 
 		nodes.enabled.addEventListener('change', () => persist({ enabled: nodes.enabled.checked }));
 		nodes.quality.addEventListener('input', () => {
@@ -320,10 +343,14 @@
 	}
 
 	async function processAddedFiles(up, addedFiles) {
-		if (!encoder || !state.enabled) return;
-
 		const targets = addedFiles.filter(isConvertTarget);
 		if (!targets.length) return;
+
+		if (!encoder || !state.enabled) {
+			// Graceful pass-through — but say so, since silence here looks broken.
+			if (!encoder) showBarStatus('⚠ Encoder failed to load — files upload unconverted.', 'warn');
+			return;
+		}
 
 		// Stop the queue synchronously so nothing uploads before conversion.
 		// Re-entrant stop on an already-stopped plupload queue is harmless.
@@ -332,6 +359,9 @@
 		// Batch counter, not a one-shot boolean: a batch added while another is
 		// still encoding must convert too, and only the last finisher resumes.
 		up._dsBatches = (up._dsBatches || 0) + 1;
+
+		dsPending += targets.length;
+		showBarStatus(`⏳ Converting ${dsPending} file${dsPending === 1 ? '' : 's'} in this browser…`);
 
 		try {
 			for (const plFile of targets) {
@@ -347,23 +377,40 @@
 							webpFile._dsKeepBackup = true;
 							webpFile._dsRawBackup = rawFile;
 						}
-						up.addFile(webpFile);
-					} else {
-						rawFile._dsProcessed = true;
-						up.addFile(rawFile);
-					}
-				} catch (err) {
-					console.warn('[DS WebP Squoosh] conversion failed, uploading original:', plFile.name, err);
-					rawFile._dsProcessed = true;
-					up.addFile(rawFile);
-				}
+						dsResults.saved += Math.max(0, rawFile.size - webpFile.size);
+						up.addFile(webpFile);			} else {
+				rawFile._dsProcessed = true;
+				up.addFile(rawFile);
 			}
-		} finally {
-			// Resume only when the final batch finishes — a batch that arrived
+			} catch (err) {
+				console.warn('[DS WebP Squoosh] conversion failed, uploading original:', plFile.name, err);
+				rawFile._dsProcessed = true;
+				up.addFile(rawFile);
+				dsResults.fail += 1;
+			}
+			// Success/fallback accounted identically: keep the live count honest.
+			dsResults.ok += 1;
+			dsPending = Math.max(0, dsPending - 1);
+			if (dsPending > 0) showBarStatus(`⏳ Converting ${dsPending} file${dsPending === 1 ? '' : 's'}…`);
+		}
+	} finally {
+		// Resume only when the final batch finishes — a batch that arrived
 		// mid-encode keeps the queue paused until its own re-adds complete.
-			if (0 === --up._dsBatches) up.start();
+		if (0 === --up._dsBatches) {
+			if (dsResults.fail) {
+				showBarStatus(`⚠ ${dsResults.fail} file${dsResults.fail === 1 ? '' : 's'} could not be converted — uploaded as original.`, 'warn');
+			} else if (dsResults.ok && dsResults.saved > 0) {
+				showBarStatus(`✓ ${dsResults.ok} converted · saved ${formatBytes(dsResults.saved)}`);
+			} else if (dsResults.ok) {
+				showBarStatus(`✓ ${dsResults.ok} converted (no smaller at this quality)`);
+			}
+			dsResults.ok = 0;
+			dsResults.fail = 0;
+			dsResults.saved = 0;
+			up.start();
 		}
 	}
+}
 
 	const pendingBackups = new Map(); // plupload file id → raw original File
 

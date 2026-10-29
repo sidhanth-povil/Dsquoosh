@@ -338,10 +338,14 @@
 				try {
 					const webpFile = await toWebpFile(rawFile, state.quality);
 					if (webpFile) {
-						up.addFile(webpFile);
+						// Snapshot the Keep Original decision NOW: the queue may sit
+						// before its upload starts, and the FileUploaded handler must
+						// use the choice made at queue time, not the current toggle.
 						if (state.keepOriginal && webpFile._dsOrigSize !== webpFile.size) {
-							pendingBackups.set(webpFile.name, rawFile);
+							webpFile._dsKeepBackup = true;
+							webpFile._dsRawBackup = rawFile;
 						}
+						up.addFile(webpFile);
 					} else {
 						rawFile._dsProcessed = true;
 						up.addFile(rawFile);
@@ -354,18 +358,11 @@
 			}
 		} finally {
 			up._dsProcessing = false;
-			up.files.forEach((f) => {
-				const native = getNativeFile(f) || f;
-				if (native._dsProcessed) {
-					f._dsProcessed = true;
-					f._dsQuality = f._dsQuality || native._dsQuality || undefined;
-				}
-			});
 			up.start();
 		}
 	}
 
-	const pendingBackups = new Map(); // webp file name → raw original File
+	const pendingBackups = new Map(); // plupload file id → raw original File
 
 	function uploadVaultCopy(attachmentId, rawFile) {
 		const fd = new FormData();
@@ -388,7 +385,28 @@
 		if (!up || up._dsBound) return;
 		up._dsBound = true;
 
-		up.bind('FilesAdded', (up2, addedFiles) => { void processAddedFiles(up2, addedFiles); });
+		up.bind('FilesAdded', (up2, addedFiles) => {
+			// Per addFile's source (wp-includes/js/plupload/plupload.min.js), the
+			// wrapper handed to every uploader event is built fresh from the native
+			// file and copies none of its custom properties — stamp them onto the
+			// wrapper here, keyed off the staging slots we set on the native. This
+			// fires for the re-entrant addFile() of each converted file, before its
+			// upload can start, and registers the vault backup under the wrapper's
+			// plupload file id. One-shot: the staging slot is cleared once copied.
+			addedFiles.forEach((f) => {
+				const native = getNativeFile(f) || f;
+				if (native._dsProcessed) f._dsProcessed = true;
+				if (native._dsQuality !== undefined && f._dsQuality === undefined) {
+					f._dsQuality = native._dsQuality;
+					f._dsOrigSize = native._dsOrigSize;
+				}
+				if (native._dsKeepBackup) {
+					pendingBackups.set(f.id, native._dsRawBackup);
+					native._dsKeepBackup = false;
+				}
+			});
+			void processAddedFiles(up2, addedFiles);
+		});
 
 		up.bind('BeforeUpload', (up2, file) => {
 			up2.settings.multipart_params = up2.settings.multipart_params || {};
@@ -402,9 +420,12 @@
 		});
 
 		up.bind('FileUploaded', (up2, file, res) => {
-			if (!state.keepOriginal || !pendingBackups.has(file.name)) return;
-			const rawFile = pendingBackups.get(file.name);
-			pendingBackups.delete(file.name);
+			// Keyed by the plupload file id, and NO re-read of state.keepOriginal:
+			// the keep/skip decision was snapshotted on the native when the file
+			// was queued (two same-named files in one batch must not collide).
+			const rawFile = pendingBackups.get(file.id);
+			if (!rawFile) return;
+			pendingBackups.delete(file.id);
 
 			let attachmentId = 0;
 			try {

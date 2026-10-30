@@ -1,0 +1,37 @@
+// Hand-built minimal GIF89a streams (1x1) for tests and e2e fixtures.
+const HEADER = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61]; // GIF89a
+const LSD = [0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00]; // 1x1, global table (2 colors)
+const GCT = [0x00, 0x00, 0x00, 0xff, 0xff, 0xff];
+const NETSCAPE = [
+	0x21, 0xff, 0x0b, 0x4e, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2e, 0x30,
+	0x03, 0x01, 0x00, 0x00, 0x00,
+];
+const COMMENT = [0x21, 0xfe, 0x03, 0x68, 0x69, 0x21, 0x00]; // "hi!"
+const GCE = [0x21, 0xf9, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00];
+const LZW = [0x02, 0x02, 0x44, 0x01, 0x00]; // min code size 2, one 2-byte sub-block, end
+const LOCAL_TABLE = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60];
+
+function frame(withLocalTable) {
+	const flags = withLocalTable ? 0x80 : 0x00; // local table of 2 colors
+	return [
+		...GCE,
+		0x2c, 0, 0, 0, 0, 0x01, 0x00, 0x01, 0x00, flags,
+		...(withLocalTable ? LOCAL_TABLE : []),
+		...LZW,
+	];
+}
+
+export function buildGif({ frames = 1, netscape = false, comment = false, localTableOnFirst = false } = {}) {
+	const body = [];
+	for (let i = 0; i < frames; i++) body.push(...frame(i === 0 && localTableOnFirst));
+	return new Uint8Array([
+		...HEADER, ...LSD, ...GCT,
+		...(netscape ? NETSCAPE : []),
+		...(comment ? COMMENT : []),
+		...body,
+		0x3b,
+	]);
+}
+
+export const STATIC_GIF = buildGif({ frames: 1 });
+export const ANIMATED_GIF = buildGif({ frames: 2, netscape: true });

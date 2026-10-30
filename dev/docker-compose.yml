@@ -1,0 +1,51 @@
+name: dswebp
+
+x-wp-env: &wp-env
+  WORDPRESS_DB_HOST: db
+  WORDPRESS_DB_USER: wp
+  WORDPRESS_DB_PASSWORD: wp
+  WORDPRESS_DB_NAME: wp
+
+# NOTE: cli MUST have the same mounts as wp, or wp-cli sees an empty plugin folder.
+services:
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_DATABASE: wp
+      MARIADB_USER: wp
+      MARIADB_PASSWORD: wp
+      MARIADB_ROOT_PASSWORD: root
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      retries: 30
+
+  wp:
+    image: ${WP_IMAGE:-wordpress:latest}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8089:80"
+    environment: *wp-env
+    volumes:
+      - wpdata:/var/www/html
+      - ../ds-webp-squoosh:/var/www/html/wp-content/mu-plugins/ds-webp-squoosh
+      - ../ds-webp-squoosh/ds-webp-squoosh-loader.php:/var/www/html/wp-content/mu-plugins/ds-webp-squoosh-loader.php
+      - ./mu/ds-dev-no-webp.php:/var/www/html/wp-content/mu-plugins/ds-dev-no-webp.php
+
+  cli:
+    image: wordpress:cli
+    user: "33:33"
+    depends_on:
+      - wp
+    entrypoint: ["sleep", "infinity"]
+    environment: *wp-env
+    volumes:
+      - wpdata:/var/www/html
+      - ../ds-webp-squoosh:/var/www/html/wp-content/mu-plugins/ds-webp-squoosh
+      - ../ds-webp-squoosh/ds-webp-squoosh-loader.php:/var/www/html/wp-content/mu-plugins/ds-webp-squoosh-loader.php
+      - ./mu/ds-dev-no-webp.php:/var/www/html/wp-content/mu-plugins/ds-dev-no-webp.php
+
+volumes:
+  wpdata:

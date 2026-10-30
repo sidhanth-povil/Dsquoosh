@@ -2,7 +2,7 @@
 /**
  * Plugin Name: DS WebP Squoosh Studio
  * Description: Zero-server-load client-side WebP converter (Squoosh's libwebp WASM) for the WP admin. JPEG/PNG uploads are converted in the browser to WebP (quality 82% default, 2460px max edge) before they ever reach the server.
- * Version:     1.1.2
+ * Version:     1.2.0
  * Author:      DesignSuite Studio
  * License:     GPL-2.0-or-later
  */
@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class DS_WebP_Squoosh_Studio {
 
-	const VERSION = '1.1.2';
+	const VERSION = '1.2.0';
 
 	/**
 	 * ---- SETTINGS (edit here; or override via the filters shown) ----------
@@ -25,12 +25,23 @@ final class DS_WebP_Squoosh_Studio {
 	const BACKUP_MAX_BYTES  = 20971520; // 20 MB cap per vaulted original. (`ds_webp_backup_max_bytes` filter)
 	const AJAX_ACTION       = 'ds_save_original_backup';
 
+	const VAULT_EXTENSIONS  = [ 'jpg', 'jpeg', 'png', 'gif', 'bmp', 'tif', 'tiff', 'heic', 'heif' ];
+	const VAULT_MIMES       = [ 'image/jpeg', 'image/png', 'image/gif', 'image/bmp', 'image/x-ms-bmp', 'image/tiff' ];
+	const HEIC_EXTENSIONS   = [ 'heic', 'heif' ];
+	const MODULE_MIN_WP     = '6.6'; // Script modules in wp-admin are only reliable from 6.6.
+
 	private $vault_token = null;
+	private $enqueued    = false;
+	private $printed     = false;
 
 	public function __construct() {
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_studio_assets' ] );
 		add_action( 'elementor/editor/before_enqueue_scripts', [ $this, 'enqueue_studio_assets' ] );
+		add_action( 'admin_head', [ $this, 'print_client_config' ], 0 );
+		add_action( 'elementor/editor/wp_head', [ $this, 'print_client_config' ], 0 );
+		add_action( 'elementor/editor/after_enqueue_scripts', [ $this, 'print_client_config' ], 0 ); // Fallback; the guard prevents a second print.
 		add_action( 'add_attachment', [ $this, 'save_compression_metadata' ] );
+		add_action( 'rest_after_insert_attachment', [ $this, 'save_rest_compression_metadata' ], 10, 3 );
 		add_action( 'wp_ajax_' . self::AJAX_ACTION, [ $this, 'ajax_save_original_backup' ] );
 		add_action( 'delete_attachment', [ $this, 'cleanup_original_backup' ] );
 
@@ -49,6 +60,31 @@ final class DS_WebP_Squoosh_Studio {
 
 		$base_url = plugin_dir_url( __FILE__ ) . 'assets/';
 
+		if ( version_compare( get_bloginfo( 'version' ), self::MODULE_MIN_WP, '>=' ) && function_exists( 'wp_enqueue_script_module' ) ) {
+			wp_enqueue_script_module( 'ds-webp-squoosh', $base_url . 'studio.js', [], self::VERSION );
+		} else {
+			// Classic handle printed as a module via script_loader_tag.
+			wp_enqueue_script( 'ds-webp-squoosh', $base_url . 'studio.js', [ 'wp-plupload', 'media-editor' ], self::VERSION, true );
+			add_filter( 'script_loader_tag', [ $this, 'force_module_type' ], 10, 2 );
+		}
+
+		$this->enqueued = true;
+		wp_enqueue_style( 'ds-webp-squoosh-studio', $base_url . 'studio.css', [], self::VERSION );
+		wp_enqueue_style( 'ds-webp-squoosh-panel', $base_url . 'panel.css', [], self::VERSION );
+	}
+
+	/**
+	 * Print the inline config in <head> (module scripts are deferred, but editor
+	 * scripts are not) and switch off core's experimental client-side media
+	 * processing, which would otherwise bypass this plugin in the block editor.
+	 * Once per request, only where studio.js was enqueued.
+	 */
+	public function print_client_config() {
+		if ( $this->printed || ! $this->enqueued ) {
+			return;
+		}
+		$this->printed = true;
+
 		$config = wp_json_encode(
 			[
 				'ajaxUrl'        => admin_url( 'admin-ajax.php' ),
@@ -56,23 +92,20 @@ final class DS_WebP_Squoosh_Studio {
 				'defaultQuality' => (int) apply_filters( 'ds_webp_default_quality', self::DEFAULT_QUALITY ),
 				'maxDim'         => (int) apply_filters( 'ds_webp_max_dim', self::MAX_DIM ),
 				'defaultBackup'  => (bool) apply_filters( 'ds_webp_keep_original', self::KEEP_ORIGINAL ),
-				'maxBackupBytes' => (int) apply_filters( 'ds_webp_backup_max_bytes', self::BACKUP_MAX_BYTES ),
+				'maxBackupBytes' => $this->backup_max_bytes(),
+				'webpSupported'  => (bool) wp_image_editor_supports( [ 'mime_type' => 'image/webp' ] ),
 			]
 		);
 
-		$inline = "window.DSWebPConfig = {$config};";
-
-		if ( function_exists( 'wp_enqueue_script_module' ) ) {
-			// WP 6.5+: native script-module loading.
-			wp_enqueue_script_module( 'ds-webp-squoosh', $base_url . 'studio.js', [], self::VERSION );
-		} else {
-			// Pre-6.5 fallback: classic handle printed as a module via script_loader_tag.
-			wp_enqueue_script( 'ds-webp-squoosh', $base_url . 'studio.js', [ 'wp-plupload', 'media-editor' ], self::VERSION, true );
-			add_filter( 'script_loader_tag', [ $this, 'force_module_type' ], 10, 2 );
+		if ( wp_image_editor_supports( [ 'mime_type' => 'image/webp' ] ) ) {
+			wp_print_inline_script_tag( 'window.__clientSideMediaProcessing = false;' );
 		}
+		wp_print_inline_script_tag( "window.DSWebPConfig = {$config};" );
+	}
 
-		wp_print_inline_script_tag( $inline );
-		wp_enqueue_style( 'ds-webp-squoosh-studio', $base_url . 'studio.css', [], self::VERSION );
+	/** Per-original backup cap in bytes (`ds_webp_backup_max_bytes` filter). */
+	private function backup_max_bytes() {
+		return max( 0, (int) apply_filters( 'ds_webp_backup_max_bytes', self::BACKUP_MAX_BYTES ) );
 	}
 
 	public function force_module_type( $tag, $handle ) {
@@ -87,11 +120,34 @@ final class DS_WebP_Squoosh_Studio {
 	 * (only for files our JS intercepted).
 	 */
 	public function save_compression_metadata( $attachment_id ) {
-		if ( isset( $_REQUEST['_ds_webp_quality'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-			update_post_meta( $attachment_id, '_ds_webp_quality', min( 100, max( 1, absint( $_REQUEST['_ds_webp_quality'] ) ) ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$this->store_compression_meta(
+			(int) $attachment_id,
+			$_REQUEST['_ds_webp_quality'] ?? null, // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$_REQUEST['_ds_orig_size'] ?? null // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		);
+	}
+
+	/** Block-editor uploads (POST /wp/v2/media) carry the same two fields. */
+	public function save_rest_compression_metadata( $attachment, $request, $creating ) {
+		if ( ! $creating || ! $attachment instanceof WP_Post ) {
+			return;
 		}
-		if ( isset( $_REQUEST['_ds_orig_size'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-			update_post_meta( $attachment_id, '_ds_orig_size', absint( $_REQUEST['_ds_orig_size'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$this->store_compression_meta( $attachment->ID, $request->get_param( '_ds_webp_quality' ), $request->get_param( '_ds_orig_size' ) );
+	}
+
+	/** Quality clamped 1-100, size absint; empty/zero values store nothing. */
+	private function store_compression_meta( $id, $quality, $orig_size ) {
+		if ( is_scalar( $quality ) ) {
+			$q = min( 100, absint( $quality ) );
+			if ( $q ) {
+				update_post_meta( $id, '_ds_webp_quality', $q );
+			}
+		}
+		if ( is_scalar( $orig_size ) ) {
+			$size = absint( $orig_size );
+			if ( $size ) {
+				update_post_meta( $id, '_ds_orig_size', $size );
+			}
 		}
 	}
 
@@ -110,6 +166,12 @@ final class DS_WebP_Squoosh_Studio {
 		if ( ! $attachment_id || empty( $_FILES['original_file'] ) || ! is_array( $_FILES['original_file'] ) ) {
 			wp_send_json_error( [ 'message' => 'Missing attachment ID or file payload.' ], 400 );
 		}
+		if ( 'attachment' !== get_post_type( $attachment_id ) || ! current_user_can( 'edit_post', $attachment_id ) ) {
+			wp_send_json_error( [ 'message' => 'Insufficient permissions for this attachment.' ], 403 );
+		}
+		if ( get_post_meta( $attachment_id, '_ds_original_backup', true ) ) {
+			wp_send_json_error( [ 'message' => 'This attachment already has a backup.' ], 409 );
+		}
 
 		$file = $_FILES['original_file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
 
@@ -119,17 +181,17 @@ final class DS_WebP_Squoosh_Studio {
 		if ( ! is_uploaded_file( $file['tmp_name'] ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
 			wp_send_json_error( [ 'message' => 'Invalid upload payload.' ], 400 );
 		}
-		if ( (int) $file['size'] > self::BACKUP_MAX_BYTES ) {
+		if ( (int) $file['size'] > $this->backup_max_bytes() ) {
 			wp_send_json_error( [ 'message' => 'Original exceeds the backup size cap.' ], 413 );
 		}
 		if ( is_multisite() && wp_is_large_network() && ! is_super_admin() ) {
 			wp_send_json_error( [ 'message' => 'Backup disabled on large networks.' ], 403 );
 		}
 
-		// Whitelist: only real JPEG/PNG originals belong in the vault.
+		// Whitelist: only real raster-image originals belong in the vault.
 		$ext = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) );
-		if ( ! in_array( $ext, [ 'jpg', 'jpeg', 'png' ], true ) ) {
-			wp_send_json_error( [ 'message' => 'Only JPEG/PNG originals can be vaulted.' ], 415 );
+		if ( ! in_array( $ext, self::VAULT_EXTENSIONS, true ) ) {
+			wp_send_json_error( [ 'message' => 'This image format cannot be vaulted.' ], 415 );
 		}
 
 		$upload_dir = wp_upload_dir();
@@ -148,14 +210,16 @@ final class DS_WebP_Squoosh_Studio {
 		if ( ! @move_uploaded_file( $file['tmp_name'], $target_path ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
 			wp_send_json_error( [ 'message' => 'Failed to write original file to vault.' ], 500 );
 		}
-		@chmod( $target_path, FS_CHMOD_FILE );
+		// FS_CHMOD_FILE only exists once WP_Filesystem() ran — never in admin-ajax.
+		@chmod( $target_path, defined( 'FS_CHMOD_FILE' ) ? FS_CHMOD_FILE : 0644 );
 
-		// Cheap integrity check after the move: file must still decode as an image.
-		if ( function_exists( 'getimagesize' ) ) {
-			$check = @getimagesize( $target_path );
-			if ( ! $check || empty( $check['mime'] ) || ! in_array( $check['mime'], [ 'image/jpeg', 'image/png' ], true ) ) {
+		// Integrity check after the move: HEIC/HEIF are not decodable by getimagesize
+		// (extension whitelist only); everything else must decode as an allowed image.
+		if ( ! in_array( $ext, self::HEIC_EXTENSIONS, true ) ) {
+			$check = function_exists( 'getimagesize' ) ? @getimagesize( $target_path ) : false;
+			if ( ! $check || empty( $check['mime'] ) || ! in_array( $check['mime'], self::VAULT_MIMES, true ) ) {
 				wp_delete_file( $target_path );
-				wp_send_json_error( [ 'message' => 'Payload is not a valid JPEG/PNG image.' ], 415 );
+				wp_send_json_error( [ 'message' => 'Payload is not a valid image.' ], 415 );
 			}
 		}
 

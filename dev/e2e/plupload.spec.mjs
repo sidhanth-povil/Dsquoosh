@@ -88,6 +88,9 @@ test('no stuck tiles: no queue model with uploading:true after settle', async ({
 test('webp larger than original (8x8 png) → original uploaded', async ({ page }) => {
   await page.goto('/wp-admin/media-new.php');
   await upload(page, [noisyPng(8, 8)]);
+  // Asserted before settle: the panel clears its rows 4 s after the last file is done.
+  await expect(page.locator('.ds-webp-panel__row', { hasText: 'noise.png' }).locator('.ds-webp-panel__detail'))
+    .toHaveText('WebP was larger — original uploaded', { timeout: SETTLE_MS });
   const list = await settle(page, 1);
   expect(summary(list)).toEqual(['noise:image/png']);
   expect(await meta(list[0].ID, '_ds_webp_quality')).toBe('');
@@ -97,6 +100,8 @@ test('encoder fails (route **/webp_enc*.wasm aborted) → originals uploaded, no
   await context.route('**/webp_enc*.wasm', (route) => route.abort());
   await page.goto('/wp-admin/upload.php');
   await upload(page, [await jpeg(page, 640, 480), await png(page, 400, 300)]);
+  await expect(page.locator('.ds-webp-panel__detail', { hasText: "Couldn't convert — original uploaded" }))
+    .toHaveCount(2, { timeout: SETTLE_MS });
   const list = await settle(page, 2);
   expect(summary(list)).toEqual(['graphic:image/png', 'photo:image/jpeg']);
   await expectNoStuckTiles(page);

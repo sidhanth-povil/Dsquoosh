@@ -70,6 +70,7 @@ final class DS_WebP_Squoosh_Studio {
 
 		$this->enqueued = true;
 		wp_enqueue_style( 'ds-webp-squoosh-studio', $base_url . 'studio.css', [], self::VERSION );
+		wp_enqueue_style( 'ds-webp-squoosh-panel', $base_url . 'panel.css', [], self::VERSION );
 	}
 
 	/**

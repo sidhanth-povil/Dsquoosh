@@ -111,7 +111,7 @@ export const animatedGif = (name = 'moving.gif') => asUpload(name, 'image/gif', 
 
 function pngChunk(type, data) {
   const body = Buffer.concat([Buffer.from(type), data]);
-  const out = Buffer.alloc(8 + body.length + 4);
+  const out = Buffer.alloc(4 + body.length + 4); // length + (type + data) + crc
   out.writeUInt32BE(data.length, 0);
   body.copy(out, 4);
   out.writeUInt32BE(crc32(body), 8 + data.length);

@@ -6,7 +6,7 @@
  * and the WebP uploads only when it is smaller. Anything else — and any failure —
  * uploads the untouched original. The server does no image processing.
  */
-import { createSettings, clampInt } from './lib/settings.js';
+import { createSettings, clampInt, PRESETS, presetFor } from './lib/settings.js';
 import { classifyFile } from './lib/classify.js';
 import { createConverter } from './lib/convert.js';
 import { processFile } from './lib/pipeline.js';
@@ -15,10 +15,12 @@ import { installPluploadAdapter } from './lib/plupload-adapter.js';
 import { installRestAdapter } from './lib/rest-adapter.js';
 import { vaultOriginal } from './lib/vault.js';
 import { openPreviewModal } from './lib/preview-modal.js';
+import { mountPanel, mountEditorButton } from './lib/panel.js';
 
 const DEFAULT_MAX_DIM = 2460;
 const API_FETCH_POLL_MS = 250;
 const API_FETCH_POLL_TRIES = 120; // 30 s
+const UPLOAD_HOST_SELECTOR = '.upload-ui, #plupload-upload-ui, .media-frame-uploader, .uploader-inline';
 const config = window.DSWebPConfig || {};
 
 // localStorage access itself can throw (SecurityError when storage is blocked).
@@ -39,10 +41,13 @@ const jobs = createJobStore();
 const jobIds = new WeakMap(); // original File -> job id
 const keepOriginalAtQueue = new WeakMap(); // original File -> Keep Original snapshot
 
-// One preview modal at a time: concurrent files wait their turn.
+// One preview modal at a time: concurrent files wait their turn. A confirmed quality becomes the new setting.
 let previewChain = Promise.resolve();
 function preview(file, quality) {
-	const next = previewChain.then(() => openPreviewModal(file, quality, converter.convert));
+	const next = previewChain.then(() => openPreviewModal(file, quality, converter.convert)).then((picked) => {
+		if (picked) settings.set({ quality: picked.quality });
+		return picked;
+	});
 	previewChain = next.catch(() => null);
 	return next;
 }
@@ -72,6 +77,14 @@ function onUploaded(result, attachmentId) {
 }
 
 installPluploadAdapter({ process, onUploaded });
+
+function mountUi() {
+	const webpSupported = config.webpSupported !== false;
+	const panel = mountPanel({ settings, jobs, presets: PRESETS, presetFor, webpSupported, uploadHostSelector: UPLOAD_HOST_SELECTOR });
+	mountEditorButton(panel, settings, webpSupported);
+}
+
+if (document.body) mountUi(); else document.addEventListener('DOMContentLoaded', mountUi, { once: true });
 
 // wp.apiFetch is a classic script, normally ready before this module runs; poll briefly if not.
 function installRestAdapterWhenReady() {

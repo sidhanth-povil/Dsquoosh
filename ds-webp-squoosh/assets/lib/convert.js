@@ -21,63 +21,91 @@ function newWorker() {
 	}
 }
 
-function settle(slot, id) {
-	const job = slot.pending.get(id);
-	if (job) {
-		clearTimeout(job.timer);
-		slot.pending.delete(id);
-	}
-	return job;
-}
-
-// Terminates the worker and rejects everything it was holding.
-function kill(slot, failure) {
-	slot.dead = true;
-	slot.worker.terminate();
-	[...slot.pending.keys()].forEach((id) => settle(slot, id).reject(failure));
-}
-
-function spawnSlot() {
-	const slot = { worker: newWorker(), pending: new Map(), dead: false };
-	slot.worker.onmessage = ({ data }) => {
-		const job = settle(slot, data.id);
-		if (!job) return;
-		if (data.ok) job.resolve(data.buffer);
-		else job.reject(new Error(data.error));
-	};
-	slot.worker.onerror = (event) => {
-		if (event && event.preventDefault) event.preventDefault();
-		kill(slot, new WorkerFailure((event && event.message) || 'worker error'));
-	};
-	slot.worker.onmessageerror = () => kill(slot, new WorkerFailure('worker message could not be deserialized'));
-	return slot;
-}
-
+// Pool: one shared FIFO; each worker runs one job at a time, so a job's timeout is
+// armed only when it is posted and measures that job's own work, never queue wait.
 function createPool(size, timeoutMs) {
 	let slots = [];
+	let queue = [];
 	let nextId = 1;
 
-	function pickSlot() {
-		slots = slots.filter((s) => !s.dead);
-		const idle = slots.reduce((best, s) => (!best || s.pending.size < best.pending.size ? s : best), null);
-		if (idle && (idle.pending.size === 0 || slots.length >= size)) return idle;
-		const slot = spawnSlot();
+	// Clears the slot's in-flight job and hands it to `outcome`.
+	function finish(slot, outcome) {
+		const job = slot.job;
+		if (!job) return;
+		clearTimeout(job.timer);
+		slot.job = null;
+		outcome(job);
+	}
+
+	// Terminates the worker; only its in-flight job fails, queued jobs move on.
+	function kill(slot, failure) {
+		slot.worker.terminate();
+		slots = slots.filter((s) => s !== slot);
+		finish(slot, (job) => job.reject(failure));
+		dispatch();
+	}
+
+	function spawn() {
+		const slot = { worker: newWorker(), job: null };
+		slot.worker.onmessage = ({ data }) => {
+			if (!slot.job || slot.job.id !== data.id) return;
+			finish(slot, (job) => (data.ok ? job.resolve(data.buffer) : job.reject(new Error(data.error))));
+			dispatch();
+		};
+		slot.worker.onerror = (event) => {
+			if (event && event.preventDefault) event.preventDefault();
+			kill(slot, new WorkerFailure((event && event.message) || 'worker error'));
+		};
+		slot.worker.onmessageerror = () => kill(slot, new WorkerFailure('worker message could not be deserialized'));
 		slots = [...slots, slot];
 		return slot;
 	}
 
+	function start(slot, job) {
+		try {
+			slot.worker.postMessage(job.message);
+		} catch (err) {
+			job.reject(err); // job-level (e.g. DataCloneError); the worker stays healthy
+			return;
+		}
+		slot.job = { ...job, timer: setTimeout(() => kill(slot, new WorkerFailure('worker timed out')), timeoutMs) };
+	}
+
+	function dispatch() {
+		while (queue.length) {
+			let slot = slots.find((s) => !s.job);
+			if (!slot && slots.length >= size) return;
+			try {
+				slot = slot || spawn();
+			} catch (err) {
+				const failed = queue;
+				queue = [];
+				failed.forEach((job) => job.reject(err));
+				return;
+			}
+			const [job, ...rest] = queue;
+			queue = rest;
+			start(slot, job);
+		}
+	}
+
 	return {
 		run(file, quality, maxDim) {
-			const slot = pickSlot();
 			const id = nextId++;
 			return new Promise((resolve, reject) => {
-				const timer = setTimeout(() => kill(slot, new WorkerFailure('worker timed out')), timeoutMs);
-				slot.pending.set(id, { resolve, reject, timer });
-				slot.worker.postMessage({ id, file, quality, maxDim });
+				queue = [...queue, { id, message: { id, file, quality, maxDim }, resolve, reject }];
+				dispatch();
 			});
 		},
 		dispose() {
-			slots.forEach((s) => kill(s, new Error('converter disposed')));
+			const disposed = new Error('converter disposed');
+			const waiting = queue;
+			queue = [];
+			waiting.forEach((job) => job.reject(disposed));
+			slots.forEach((slot) => {
+				slot.worker.terminate();
+				finish(slot, (job) => job.reject(disposed));
+			});
 			slots = [];
 		},
 	};

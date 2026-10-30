@@ -147,3 +147,49 @@ test('proven pool: hung worker times out, job rejects, worker is replaced', asyn
 	}, { lib: LIB, png: PNG_HELPER });
 	expect(r).toEqual({ first: 'image/webp', second: 'worker timed out', third: 'image/webp', constructed: 2 });
 });
+
+// Stub worker that answers serially, `ms` per job, with a tiny fake WebP payload.
+const SLOW_WORKER = `(ms, state) => class {
+	constructor() { state.constructed++; this.busyUntil = 0; }
+	postMessage({ id }) {
+		if (state.throwNext) { state.throwNext = false; throw new DOMException('nope', 'DataCloneError'); }
+		const start = Math.max(Date.now(), this.busyUntil);
+		this.busyUntil = start + ms;
+		setTimeout(() => this.onmessage && this.onmessage({ data: { id, ok: true, buffer: new ArrayBuffer(8), width: 1, height: 1 } }), this.busyUntil - Date.now());
+	}
+	terminate() { state.terminated++; }
+}`;
+
+test('timeout measures each job, not its queue wait', async ({ page }) => {
+	const r = await page.evaluate(async ({ lib, slow }) => {
+		const state = { constructed: 0, terminated: 0 };
+		window.Worker = eval(slow)(1000, state);
+		const { createConverter } = await import(lib);
+		const c = createConverter({ maxDim: 2460, poolSize: 1, jobTimeoutMs: 1500 });
+		const f = new File([new Uint8Array(4)], 'a.png', { type: 'image/png' });
+		const out = await Promise.allSettled([c.convert(f, 82), c.convert(f, 82), c.convert(f, 82)]);
+		const res = { statuses: out.map((o) => o.status), ...state };
+		c.dispose();
+		return res;
+	}, { lib: LIB, slow: SLOW_WORKER });
+	expect(r).toEqual({ statuses: ['fulfilled', 'fulfilled', 'fulfilled'], constructed: 1, terminated: 0 });
+});
+
+test('postMessage throwing rejects that job only and leaves the worker healthy', async ({ page }) => {
+	const r = await page.evaluate(async ({ lib, slow }) => {
+		const state = { constructed: 0, terminated: 0, throwNext: false };
+		window.Worker = eval(slow)(10, state);
+		const { createConverter } = await import(lib);
+		const c = createConverter({ maxDim: 2460, poolSize: 1, jobTimeoutMs: 200 });
+		const f = new File([new Uint8Array(4)], 'a.png', { type: 'image/png' });
+		await c.convert(f, 82); // prove the pool
+		state.throwNext = true;
+		const failed = await c.convert(f, 82).then(() => 'resolved', (e) => e.name);
+		await new Promise((done) => setTimeout(done, 400)); // past the timeout
+		const after = (await c.convert(f, 82)).type;
+		const res = { failed, after, ...state };
+		c.dispose();
+		return res;
+	}, { lib: LIB, slow: SLOW_WORKER });
+	expect(r).toMatchObject({ failed: 'DataCloneError', after: 'image/webp', constructed: 1, terminated: 0 });
+});

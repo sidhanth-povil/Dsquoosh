@@ -12,10 +12,13 @@ import { createConverter } from './lib/convert.js';
 import { processFile } from './lib/pipeline.js';
 import { createJobStore } from './lib/jobs.js';
 import { installPluploadAdapter } from './lib/plupload-adapter.js';
+import { installRestAdapter } from './lib/rest-adapter.js';
 import { vaultOriginal } from './lib/vault.js';
 import { openPreviewModal } from './lib/preview-modal.js';
 
 const DEFAULT_MAX_DIM = 2460;
+const API_FETCH_POLL_MS = 250;
+const API_FETCH_POLL_TRIES = 120; // 30 s
 const config = window.DSWebPConfig || {};
 
 // localStorage access itself can throw (SecurityError when storage is blocked).
@@ -69,3 +72,21 @@ function onUploaded(result, attachmentId) {
 }
 
 installPluploadAdapter({ process, onUploaded });
+
+// wp.apiFetch is a classic script, normally ready before this module runs; poll briefly if not.
+function installRestAdapterWhenReady() {
+	const tryInstall = () => {
+		const apiFetch = window.wp && window.wp.apiFetch;
+		if (!apiFetch || typeof apiFetch.use !== 'function') return false;
+		installRestAdapter({ apiFetch, process, onUploaded });
+		return true;
+	};
+	if (tryInstall()) return;
+	let tries = 0;
+	const timer = setInterval(() => {
+		tries += 1;
+		if (tryInstall() || tries >= API_FETCH_POLL_TRIES) clearInterval(timer);
+	}, API_FETCH_POLL_MS);
+}
+
+installRestAdapterWhenReady();

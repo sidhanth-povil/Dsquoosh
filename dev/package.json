@@ -1,0 +1,12 @@
+{
+  "name": "ds-webp-dev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "unit": "node --test tests/",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

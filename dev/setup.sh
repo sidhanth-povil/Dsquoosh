@@ -30,3 +30,10 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 if [ "$http_ready" -ne 1 ]; then echo "timed out waiting for http://localhost:8089/wp-login.php" >&2; exit 1; fi
+
+# mod_headers is needed for assets/.htaccess (Cache-Control: no-cache); not enabled in the stock image.
+if ! "${DC[@]}" exec -T wp apache2ctl -M 2>/dev/null | grep -q headers_module; then
+  "${DC[@]}" exec -T wp a2enmod headers >/dev/null
+  "${DC[@]}" exec -T wp apache2ctl graceful
+  sleep 2
+fi

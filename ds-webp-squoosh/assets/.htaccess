@@ -1,0 +1,9 @@
+# DS WebP Squoosh: revalidate JS/WASM so plugin upgrades take effect (lib/*.js imports carry no version string).
+<IfModule mod_headers.c>
+	<FilesMatch "\.(js|mjs|wasm)$">
+		Header set Cache-Control "no-cache"
+	</FilesMatch>
+</IfModule>
+<IfModule mod_mime.c>
+	AddType application/wasm .wasm
+</IfModule>

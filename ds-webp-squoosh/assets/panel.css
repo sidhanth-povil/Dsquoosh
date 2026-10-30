@@ -38,7 +38,8 @@
 }
 
 /* Media modal open: stay above it, but clear its bottom toolbar (30px inset + 61px bar) so Select/Insert stay reachable. */
-body.modal-open .ds-webp-panel { bottom: 100px; max-height: 60vh; }
+/* Sit bottom-left: the modal's attachment-details sidebar (alt text, caption, links) lives on the right. */
+body.modal-open .ds-webp-panel { right: auto; left: 16px; bottom: 100px; max-height: 60vh; }
 
 .ds-webp-panel *,
 .ds-webp-panel *::before,
@@ -362,7 +363,7 @@ body.modal-open .ds-webp-panel { bottom: 100px; max-height: 60vh; }
 		border-width: 1px 0 0;
 		border-radius: 8px 8px 0 0;
 	}
-	body.modal-open .ds-webp-panel { bottom: 61px; } /* modal is full-screen here; its toolbar is the bottom 61px */
+	body.modal-open .ds-webp-panel { right: 0; left: 0; bottom: 61px; } /* modal is full-screen here; its toolbar is the bottom 61px */
 	.ds-webp-editor-btn.components-button { padding: 0 6px; }
 }
 

@@ -11,6 +11,7 @@ import { classifyFile } from './lib/classify.js';
 import { createConverter } from './lib/convert.js';
 import { processFile } from './lib/pipeline.js';
 import { createJobStore } from './lib/jobs.js';
+import { createLimiter } from './lib/limiter.js';
 import { installPluploadAdapter } from './lib/plupload-adapter.js';
 import { installRestAdapter } from './lib/rest-adapter.js';
 import { vaultOriginal } from './lib/vault.js';
@@ -18,6 +19,7 @@ import { openPreviewModal } from './lib/preview-modal.js';
 import { mountPanel, mountEditorButton } from './lib/panel.js';
 
 const DEFAULT_MAX_DIM = 2460;
+const MAX_CONCURRENT = 3; // files classified/converted at once; the rest show 'waiting'
 const API_FETCH_POLL_MS = 250;
 const API_FETCH_POLL_TRIES = 120; // 30 s
 const UPLOAD_HOST_SELECTOR = '.upload-ui, #plupload-upload-ui, .media-frame-uploader, .uploader-inline';
@@ -35,9 +37,11 @@ function resolveStorage() {
 	}
 }
 
+const maxBackupBytes = Number(config.maxBackupBytes) || Infinity;
 const settings = createSettings(config, resolveStorage());
 const converter = createConverter({ maxDim: clampInt(config.maxDim, 100, 10000, DEFAULT_MAX_DIM) });
 const jobs = createJobStore();
+const limit = createLimiter(MAX_CONCURRENT);
 const jobIds = new WeakMap(); // original File -> job id
 const keepOriginalAtQueue = new WeakMap(); // original File -> Keep Original snapshot
 
@@ -61,20 +65,31 @@ function process(file, { serverSupportsWebp = true } = {}) {
 	const current = settings.get();
 	jobIds.set(file, jobs.add(file.name, file.size));
 	keepOriginalAtQueue.set(file, current.keepOriginal);
-	return processFile(file, {
+	return limit(() => processFile(file, {
 		settings: current,
 		serverSupportsWebp: serverSupportsWebp && config.webpSupported !== false,
 		classify: (f) => classifyFile(f, converter),
 		convert: converter.convert,
 		preview,
 		onStage,
-	});
+	}));
 }
 
 function onUploaded(result, attachmentId) {
 	if (!result.converted || !keepOriginalAtQueue.get(result.original)) return;
+	if (result.original.size > maxBackupBytes) return; // server would refuse it (413)
 	void vaultOriginal(config, attachmentId, result.original);
 }
+
+// Leaving mid-conversion/upload would drop queued files: ask the browser to confirm.
+const guardUnload = (e) => { e.preventDefault(); e.returnValue = ''; };
+let isGuarding = false;
+jobs.subscribe((list) => {
+	const busy = list.some((j) => j.status !== 'done');
+	if (busy === isGuarding) return;
+	isGuarding = busy;
+	window[busy ? 'addEventListener' : 'removeEventListener']('beforeunload', guardUnload);
+});
 
 installPluploadAdapter({ process, onUploaded });
 

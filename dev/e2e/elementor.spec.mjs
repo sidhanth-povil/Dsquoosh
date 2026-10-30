@@ -35,14 +35,22 @@ test('Elementor media modal upload → WebP attachment, panel inside the editor'
   const flags = await page.evaluate(() => ({ cfg: typeof window.DSWebPConfig, csm: window.__clientSideMediaProcessing }));
   expect(flags).toEqual({ cfg: 'object', csm: false });
 
-  await page.waitForFunction(() => window.elementor.getPreviewContainer?.(), null, { timeout: 120_000 });
-  await page.evaluate(() => {
-    const { $e: api, elementor: el } = window;
-    const box = api.run('document/elements/create', { container: el.getPreviewContainer(), model: { elType: 'container' } });
-    api.run('document/elements/create', { container: box, model: { elType: 'widget', widgetType: 'image' }, options: { edit: true } });
-  });
+  const preview = page.locator('.elementor-control-image .elementor-control-media__preview').first();
+  // A cold editor reports its preview container before it accepts new elements: retry until the Image controls appear.
+  await expect.poll(async () => {
+    if (await preview.count()) return true;
+    await page.evaluate(() => {
+      const { $e: api, elementor: el } = window;
+      const container = el.getPreviewContainer?.();
+      if (!container) return;
+      const box = api.run('document/elements/create', { container, model: { elType: 'container' } });
+      api.run('document/elements/create', { container: box, model: { elType: 'widget', widgetType: 'image' }, options: { edit: true } });
+    });
+    await page.waitForTimeout(3000); // inherent: give Elementor time to open the widget panel
+    return (await preview.count()) > 0;
+  }, { timeout: 120_000, intervals: [1000] }).toBe(true);
   // The empty preview has no box of its own; Elementor listens for a click on it.
-  await page.locator('.elementor-control-image .elementor-control-media__preview').first().dispatchEvent('click');
+  await preview.dispatchEvent('click');
   const modal = page.locator('.media-modal');
   await expect(modal).toBeVisible();
   await modal.locator('.moxie-shim input[type=file]').last().setInputFiles(await jpeg(page, 1200, 900, 'hero.jpg'));

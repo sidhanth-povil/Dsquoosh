@@ -186,6 +186,43 @@ test('editor toolbar button opens panel expanded', async ({ page }) => {
   await expect(panel(page)).toBeHidden();
 });
 
+test('editor toolbar button is re-inserted after the header re-renders', async ({ page }) => {
+  await openEditor(page);
+  const btn = page.locator('.editor-header__settings .ds-webp-editor-btn, .edit-post-header__settings .ds-webp-editor-btn');
+  await expect(btn).toHaveCount(1);
+  const toggle = (key) => page.evaluate((k) => window.wp.data.dispatch('core/preferences').toggle('core', k), key);
+  for (const key of ['distractionFree', 'fixedToolbar']) {
+    await toggle(key);
+    await page.waitForTimeout(500); // inherent: let React finish swapping the header
+    await toggle(key);
+    await expect(btn).toHaveCount(1);
+    await expect(btn).toBeVisible();
+  }
+  await btn.evaluate((node) => node.remove()); // worst case: React dropped the node outright
+  await expect(btn).toHaveCount(1);
+  await expect(btn).toHaveText('⚡ WebP · 82%');
+});
+
+test('media modal Library tab: collapsed panel does not cover the attachment sidebar', async ({ page }) => {
+  await page.goto('/wp-admin/media-new.php');
+  await upload(page, [await jpeg(page, 640, 480, 'sidebar.jpg')]);
+  await waitForAttachments(1);
+  await page.goto('/wp-admin/upload.php');
+  await page.waitForFunction(() => window.wp?.media);
+  await page.evaluate(() => window.wp.media({ title: 'Test', multiple: false }).open());
+  await page.locator('.media-modal').getByRole('tab', { name: 'Media Library' }).click();
+  await page.locator('.media-modal .attachment').first().click();
+  const sidebar = page.locator('.media-modal .media-sidebar');
+  await expect(sidebar.locator('[data-setting=alt] input, [data-setting=alt] textarea').first()).toBeVisible();
+  await expect(panel(page)).toBeVisible();
+  await expect(settingsBox(page)).toBeHidden();
+  await expect(rows(page)).toHaveCount(0);
+  await screenshot(page, 'modal-library');
+  const [p, s] = await Promise.all([panel(page).boundingBox(), sidebar.boundingBox()]);
+  const overlaps = p.x < s.x + s.width && p.x + p.width > s.x && p.y < s.y + s.height && p.y + p.height > s.y;
+  expect(overlaps, `panel ${JSON.stringify(p)} vs sidebar ${JSON.stringify(s)}`).toBe(false);
+});
+
 test('keyboard: Tab reaches badge, Enter expands, Space toggles switch', async ({ page }) => {
   await page.goto('/wp-admin/media-new.php');
   await expect(badge(page)).toBeVisible();

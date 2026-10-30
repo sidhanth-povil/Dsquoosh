@@ -1,5 +1,9 @@
 # DS WebP v2 "WebP everywhere" Implementation Plan
 
+> **Status: EXECUTED & SHIPPED** — all tasks completed on 2026-10-30; review-fix
+> commits (`f3797b2`, `f5bbf23`, `f3eabbb`, `6f4a28b`) landed after it and
+> everything is merged to `main` via PR #1. See `docs/PROJECT.md` for status.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Convert every normal image uploaded anywhere in wp-admin (Add New, Library grid, media modal, Elementor modal, block/site editor drops) to WebP in the browser, controlled from one floating panel.

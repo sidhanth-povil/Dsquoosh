@@ -11,7 +11,7 @@
  * If anything fails, the untouched original uploads unchanged — uploads never
  * break because of this plugin.
  */
-(async function dsWebpStudio() {
+(function dsWebpStudio() {
 	'use strict';
 
 	const config = window.DSWebPConfig || {};
@@ -26,12 +26,20 @@
 	};
 
 	let encoder = null; // Squoosh libwebp encoder, loaded below
-	try {
-		encoder = await import('./vendor/@jsquash/webp/index.js');
-		console.info('[DS WebP Squoosh] encoder ready (Squoosh libwebp WASM).');
-	} catch (err) {
-		console.error('[DS WebP Squoosh] encoder unavailable — uploads will pass through unconverted:', err);
-	}
+	let encoderFailed = false;
+	// Not awaited: the uploader hooks below must be installed before DOM-ready
+	// builds the page's uploaders (media-new.php, Library grid). Encodes await it.
+	const encoderReady = import('./vendor/@jsquash/webp/index.js').then(
+		(mod) => {
+			encoder = mod;
+			console.info('[DS WebP Squoosh] encoder ready (Squoosh libwebp WASM).');
+		},
+		(err) => {
+			encoderFailed = true;
+			console.error('[DS WebP Squoosh] encoder unavailable — uploads will pass through unconverted:', err);
+			showBarStatus('⚠ Encoder failed to load — files upload unconverted.', 'warn');
+		}
+	);
 
 	/* ------------------------------------------------------------------ *
 	 *  Tooling
@@ -86,6 +94,7 @@
 	}
 
 	async function encodeImageDataToBlob(imageData, quality) {
+		await encoderReady;
 		if (!encoder) throw new Error('Encoder not loaded.');
 		const buffer = await encoder.encode(imageData, {
 			quality: clampInt(quality, 1, 100, 82),
@@ -159,7 +168,7 @@
 		status: bar.querySelector('[data-role=status]'),
 	};
 
-		if (!encoder) {
+		if (encoderFailed) {
 			nodes.status.textContent = '⚠ Encoder failed to load — files upload unconverted.';
 			nodes.status.classList.add('is-warn');
 		}
@@ -342,48 +351,57 @@
 		return /\.(jpe?g|png)$/i.test(String(plFile.name || ''));
 	}
 
-	async function processAddedFiles(up, addedFiles) {
-		const targets = addedFiles.filter(isConvertTarget);
-		if (!targets.length) return;
+	// Above core's FilesAdded handlers (priority 0), which build the attachment
+	// tiles and call up.start() — they must never see a raw JPEG/PNG.
+	const FILES_ADDED_PRIORITY = 100;
 
-		if (!encoder || !state.enabled) {
+	/**
+	 * Synchronously pulls the whole batch out of the queue and returns false to
+	 * stop core's handlers; every file is re-added later (converted, or as-is),
+	 * and core handles that re-add normally, starting its upload.
+	 */
+	function interceptAddedFiles(up, addedFiles) {
+		const targets = addedFiles.filter(isConvertTarget);
+		if (!targets.length || !state.enabled) return true;
+		if (encoderFailed) {
 			// Graceful pass-through — but say so, since silence here looks broken.
-			if (!encoder) showBarStatus('⚠ Encoder failed to load — files upload unconverted.', 'warn');
-			return;
+			showBarStatus('⚠ Encoder failed to load — files upload unconverted.', 'warn');
+			return true;
 		}
 
-		// Stop the queue synchronously so nothing uploads before conversion.
-		// Re-entrant stop on an already-stopped plupload queue is harmless.
-		up.stop();
+		// Natives first: removeFile destroys the plupload wrappers.
+		const natives = addedFiles.map((f) => getNativeFile(f) || f);
+		addedFiles.forEach((f) => up.removeFile(f));
+		const rawTargets = natives.filter((n, i) => targets.includes(addedFiles[i]));
+		natives.forEach((n, i) => { if (!targets.includes(addedFiles[i])) up.addFile(n); });
 
-		// Batch counter, not a one-shot boolean: a batch added while another is
-		// still encoding must convert too, and only the last finisher resumes.
-		up._dsBatches = (up._dsBatches || 0) + 1;
+		void convertBatch(up, rawTargets);
+		return false;
+	}
 
-		dsPending += targets.length;
+	async function convertBatch(up, rawTargets) {
+		// Snapshot Keep Original at queue time: a mid-batch toggle flip must not change it.
+		const keepOriginal = state.keepOriginal;
+
+		dsPending += rawTargets.length;
 		showBarStatus(`⏳ Converting ${dsPending} file${dsPending === 1 ? '' : 's'} in this browser…`);
 
-		try {
-			for (const plFile of targets) {
-				const rawFile = getNativeFile(plFile) || plFile;
-				up.removeFile(plFile);
-
-				try {
-					const webpFile = await toWebpFile(rawFile, state.quality);
-					if (webpFile) {
-						// Snapshot the Keep-Original decision at queue time: a mid-batch
-						// toggle flip must not change it.
-						if (state.keepOriginal && webpFile._dsOrigSize !== webpFile.size) {
-							webpFile._dsKeepBackup = true;
-							webpFile._dsRawBackup = rawFile;
-						}
-						dsResults.saved += Math.max(0, rawFile.size - webpFile.size);
-						up.addFile(webpFile);			} else {
-				rawFile._dsProcessed = true;
-				up.addFile(rawFile);
-			}
+		for (const rawFile of rawTargets) {
+			try {
+				const webpFile = await toWebpFile(rawFile, state.quality);
+				if (webpFile) {
+					if (keepOriginal && webpFile._dsOrigSize !== webpFile.size) {
+						webpFile._dsKeepBackup = true;
+						webpFile._dsRawBackup = rawFile;
+					}
+					dsResults.saved += Math.max(0, rawFile.size - webpFile.size);
+					up.addFile(webpFile);
+				} else {
+					rawFile._dsProcessed = true;
+					up.addFile(rawFile);
+				}
 			} catch (err) {
-				console.warn('[DS WebP Squoosh] conversion failed, uploading original:', plFile.name, err);
+				console.warn('[DS WebP Squoosh] conversion failed, uploading original:', rawFile.name, err);
 				rawFile._dsProcessed = true;
 				up.addFile(rawFile);
 				dsResults.fail += 1;
@@ -392,25 +410,22 @@
 			dsResults.ok += 1;
 			dsPending = Math.max(0, dsPending - 1);
 			if (dsPending > 0) showBarStatus(`⏳ Converting ${dsPending} file${dsPending === 1 ? '' : 's'}…`);
-		}
-	} finally {
-		// Resume only when the final batch finishes — a batch that arrived
-		// mid-encode keeps the queue paused until its own re-adds complete.
-		if (0 === --up._dsBatches) {
-			if (dsResults.fail) {
-				showBarStatus(`⚠ ${dsResults.fail} file${dsResults.fail === 1 ? '' : 's'} could not be converted — uploaded as original.`, 'warn');
-			} else if (dsResults.ok && dsResults.saved > 0) {
-				showBarStatus(`✓ ${dsResults.ok} converted · saved ${formatBytes(dsResults.saved)}`);
-			} else if (dsResults.ok) {
-				showBarStatus(`✓ ${dsResults.ok} converted (no smaller at this quality)`);
-			}
-			dsResults.ok = 0;
-			dsResults.fail = 0;
-			dsResults.saved = 0;
-			up.start();
+			else reportResults();
 		}
 	}
-}
+
+	function reportResults() {
+		if (dsResults.fail) {
+			showBarStatus(`⚠ ${dsResults.fail} file${dsResults.fail === 1 ? '' : 's'} could not be converted — uploaded as original.`, 'warn');
+		} else if (dsResults.saved > 0) {
+			showBarStatus(`✓ ${dsResults.ok} converted · saved ${formatBytes(dsResults.saved)}`);
+		} else {
+			showBarStatus(`✓ ${dsResults.ok} converted (no smaller at this quality)`);
+		}
+		dsResults.ok = 0;
+		dsResults.fail = 0;
+		dsResults.saved = 0;
+	}
 
 	const pendingBackups = new Map(); // plupload file id → raw original File
 
@@ -449,8 +464,8 @@
 				}
 				if (native._dsKeepBackup) pendingBackups.set(f.id, native._dsRawBackup);
 			});
-			void processAddedFiles(up2, addedFiles);
-		});
+			return interceptAddedFiles(up2, addedFiles);
+		}, null, FILES_ADDED_PRIORITY);
 
 		up.bind('BeforeUpload', (up2, file) => {
 			up2.settings.multipart_params = up2.settings.multipart_params || {};

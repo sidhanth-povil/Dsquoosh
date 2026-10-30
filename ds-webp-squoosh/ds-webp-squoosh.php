@@ -2,7 +2,7 @@
 /**
  * Plugin Name: DS WebP Squoosh Studio
  * Description: Zero-server-load client-side WebP converter (Squoosh's libwebp WASM) for the WP admin. JPEG/PNG uploads are converted in the browser to WebP (quality 82% default, 2460px max edge) before they ever reach the server.
- * Version:     1.1.2
+ * Version:     1.1.3
  * Author:      DesignSuite Studio
  * License:     GPL-2.0-or-later
  */
@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class DS_WebP_Squoosh_Studio {
 
-	const VERSION = '1.1.2';
+	const VERSION = '1.1.3';
 
 	/**
 	 * ---- SETTINGS (edit here; or override via the filters shown) ----------
@@ -148,7 +148,8 @@ final class DS_WebP_Squoosh_Studio {
 		if ( ! @move_uploaded_file( $file['tmp_name'], $target_path ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
 			wp_send_json_error( [ 'message' => 'Failed to write original file to vault.' ], 500 );
 		}
-		@chmod( $target_path, FS_CHMOD_FILE );
+		// FS_CHMOD_FILE only exists once WP_Filesystem() ran — never in admin-ajax.
+		@chmod( $target_path, defined( 'FS_CHMOD_FILE' ) ? FS_CHMOD_FILE : 0644 );
 
 		// Cheap integrity check after the move: file must still decode as an image.
 		if ( function_exists( 'getimagesize' ) ) {

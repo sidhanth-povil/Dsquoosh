@@ -4,6 +4,7 @@ import { wp, attachments, deleteAttachments, jpeg } from './fixtures.mjs';
 const SETTLE_MS = 90_000;
 let installed = false;
 let pageId = '';
+let skipReason = 'Elementor could not be installed (no network?)';
 
 test.describe.configure({ timeout: 200_000 });
 
@@ -17,6 +18,7 @@ test.beforeAll(async () => {
     pageId = (await wp('post', 'create', '--post_type=page', '--post_status=publish', '--post_title=DS Elementor', '--porcelain')).trim();
   } catch (e) {
     installed = false;
+    skipReason = `Elementor could not be installed: ${e.message}`;
   }
 });
 
@@ -27,7 +29,7 @@ test.afterAll(async () => {
 });
 
 test('Elementor media modal upload → WebP attachment, panel inside the editor', async ({ page }) => {
-  test.skip(!installed, 'Elementor could not be installed (no network?)');
+  test.skip(!installed, skipReason);
   await page.goto(`/wp-admin/post.php?post=${pageId}&action=elementor`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.elementor?.documents?.getCurrent?.() && window.$e, null, { timeout: 120_000 });
 

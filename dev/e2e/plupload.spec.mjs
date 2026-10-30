@@ -138,7 +138,15 @@ test('preview on: modal confirm uploads the WebP, skip uploads the original', as
   const modal = page.locator('.ds-webp-modal');
   await expect(modal).toHaveCount(1); // one at a time
   await expect(modal.locator('[data-role=webp-size]')).toHaveText(/KB/);
-  await modal.locator('[data-role=confirm]').click();
+  await expect(page.locator('.ds-webp-panel.is-visible')).toBeVisible();
+  const confirm = modal.locator('[data-role=confirm]');
+  await expect(confirm).toBeFocused();
+  // The modal must sit above the floating panel: its confirm button is the topmost element at its centre.
+  expect(await confirm.evaluate((b) => {
+    const r = b.getBoundingClientRect();
+    return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === b;
+  })).toBe(true);
+  await confirm.click();
   await expect(modal).toHaveCount(1);
   await modal.locator('[data-role=skip]').click();
   // Modal order follows classification order, so check one of each rather than which.

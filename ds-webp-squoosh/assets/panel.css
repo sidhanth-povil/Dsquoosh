@@ -148,8 +148,11 @@ body.modal-open .ds-webp-panel { right: auto; left: 16px; bottom: 100px; max-hei
 .ds-webp-panel__switch:disabled .ds-webp-panel__track { background: #c3c4c7; }
 .ds-webp-panel__quality { display: grid; gap: 8px; transition: opacity 150ms ease; }
 
+/* Off state: muted colour (5.7:1 on white) instead of opacity, which fails WCAG AA contrast. */
 .ds-webp-panel__settings.is-off .ds-webp-panel__quality,
-.ds-webp-panel__settings.is-off .ds-webp-panel__checks { opacity: 0.6; }
+.ds-webp-panel__settings.is-off .ds-webp-panel__quality *,
+.ds-webp-panel__settings.is-off .ds-webp-panel__checks,
+.ds-webp-panel__settings.is-off .ds-webp-panel__checks * { color: var(--ds-muted); }
 .ds-webp-panel__qhead { display: flex; align-items: baseline; justify-content: space-between; }
 .ds-webp-panel__muted { color: var(--ds-muted); font-size: 12px; }
 .ds-webp-panel__qvalue { font-variant-numeric: tabular-nums; }

@@ -17,6 +17,8 @@ export const STRINGS = Object.freeze({
 	asIs: 'Uploaded as is',
 	badge: (q) => `⚡ ${q}%`,
 	badgeOff: '⚡ off',
+	badgeLabel: (q) => `WebP settings, quality ${q}%`,
+	badgeLabelOff: 'WebP conversion off',
 	editorBadge: (q) => `⚡ WebP · ${q}%`,
 	editorBadgeOff: '⚡ WebP · off',
 	footer: (n, total, size) => `✓ ${n} of ${total} converted · saved ${size}`,

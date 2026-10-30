@@ -88,17 +88,24 @@ export function openPreviewModal(file, quality, encode) {
 		const { overlay, nodes } = buildOverlay(file, quality, originalURL);
 		const { state, render } = createRenderer(file, nodes, encode);
 		let timer = null;
+		const previousFocus = document.activeElement;
 
 		function close(sendWebp) {
 			clearTimeout(timer);
 			state.seq += 1; // drop any in-flight encode
-			document.removeEventListener('keydown', onKey);
+			document.removeEventListener('keydown', onKey, true);
 			overlay.remove();
+			if (previousFocus && previousFocus.isConnected && typeof previousFocus.focus === 'function') previousFocus.focus();
 			URL.revokeObjectURL(originalURL);
 			if (state.url) URL.revokeObjectURL(state.url);
 			resolve(sendWebp && state.blob ? { blob: state.blob, quality: state.quality } : null);
 		}
-		function onKey(e) { if (e.key === 'Escape') close(false); }
+		// Capture phase + stopPropagation: Escape must not also close a media modal underneath.
+		function onKey(e) {
+			if (e.key !== 'Escape') return;
+			e.stopPropagation();
+			close(false);
+		}
 
 		nodes.range.addEventListener('input', () => {
 			nodes.qLabel.textContent = nodes.range.value + '%';
@@ -110,8 +117,9 @@ export function openPreviewModal(file, quality, encode) {
 			if (role === 'confirm') { if (state.blob) close(true); } // wait for a first encode
 			else if (e.target === overlay || role === 'skip' || e.target.classList.contains('ds-webp-modal__close')) close(false);
 		});
-		document.addEventListener('keydown', onKey);
+		document.addEventListener('keydown', onKey, true);
 		document.body.appendChild(overlay);
+		overlay.querySelector('[data-role=confirm]').focus();
 		render();
 	});
 }

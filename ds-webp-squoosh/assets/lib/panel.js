@@ -171,7 +171,9 @@ export function mountPanel({ settings, jobs, presets, presetFor, webpSupported =
 	const ctl = createController(ui, form, jobs);
 	bindEvents(ui, ctl);
 	const syncSettings = (s) => {
-		ui.setBadge(s.enabled && webpSupported ? STRINGS.badge(s.quality) : STRINGS.badgeOff);
+		const on = s.enabled && webpSupported;
+		ui.setBadge(on ? STRINGS.badge(s.quality) : STRINGS.badgeOff);
+		ui.badge.setAttribute('aria-label', on ? STRINGS.badgeLabel(s.quality) : STRINGS.badgeLabelOff);
 		form.sync(s);
 	};
 	const renderJobs = (list) => {

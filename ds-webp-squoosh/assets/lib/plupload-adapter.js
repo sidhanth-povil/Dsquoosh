@@ -50,6 +50,15 @@ export function installPluploadAdapter({ process, onUploaded }) {
 			.then((result) => readd(up, native, result), (err) => {
 				console.warn(LOG, `processing failed, uploading original ${native.name}:`, err);
 				readd(up, native, null);
+			})
+			.catch((err) => {
+				console.warn(LOG, `re-adding failed, uploading original ${native.name}:`, err);
+				try {
+					processed.add(native);
+					up.addFile(native);
+				} catch (again) {
+					console.warn(LOG, `could not queue ${native.name}:`, again);
+				}
 			});
 	}
 

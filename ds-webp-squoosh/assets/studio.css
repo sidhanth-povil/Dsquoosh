@@ -4,7 +4,7 @@
 .ds-webp-modal {
 	position: fixed;
 	inset: 0;
-	z-index: 160000;
+	z-index: 180000; /* above the floating panel (170000) */
 	display: flex;
 	align-items: center;
 	justify-content: center;

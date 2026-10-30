@@ -61,11 +61,26 @@ function notifyUploaded(response, result, onUploaded) {
 	}
 }
 
+// apiFetch's nonce refresh re-runs the whole chain with the original options: one
+// conversion per original File (forgotten on rejection so a retry can try again).
+function memoiseByFile(process) {
+	const results = new WeakMap();
+	return (file) => {
+		if (!results.has(file)) {
+			const pending = Promise.resolve().then(() => process(file));
+			results.set(file, pending);
+			pending.catch(() => results.delete(file));
+		}
+		return results.get(file);
+	};
+}
+
 export function installRestAdapter({ apiFetch, process, onUploaded }) {
+	const processOnce = memoiseByFile(process);
 	apiFetch.use(async (options, next) => {
 		let prepared;
 		try {
-			prepared = await prepare(options, process);
+			prepared = await prepare(options, processOnce);
 		} catch (err) {
 			console.warn(LOG, 'REST upload adapter failed, sending the request unchanged:', err);
 			return next(options);

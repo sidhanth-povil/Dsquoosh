@@ -125,33 +125,12 @@ test('worker that never answers times out and falls back to main thread', async 
 	expect(ok).toBe(true);
 });
 
-test('proven pool: hung worker times out, job rejects, worker is replaced', async ({ page }) => {
-	const r = await page.evaluate(async ({ lib, png }) => {
-		const makePng = eval(png);
-		const Real = window.Worker;
-		const state = { hang: false, constructed: 0 };
-		window.Worker = class extends Real {
-			constructor(...a) { super(...a); state.constructed++; }
-			postMessage(...a) { if (!state.hang) super.postMessage(...a); }
-		};
-		const { createConverter } = await import(lib);
-		const c = createConverter({ maxDim: 2460, poolSize: 1, jobTimeoutMs: 1000 });
-		const file = await makePng(40, 40);
-		const first = (await c.convert(file, 82)).type;
-		state.hang = true;
-		const second = await c.convert(file, 82).then(() => 'resolved', (e) => e.message);
-		state.hang = false;
-		const third = (await c.convert(file, 82)).type;
-		c.dispose();
-		return { first, second, third, constructed: state.constructed };
-	}, { lib: LIB, png: PNG_HELPER });
-	expect(r).toEqual({ first: 'image/webp', second: 'worker timed out', third: 'image/webp', constructed: 2 });
-});
-
-// Stub worker that answers serially, `ms` per job, with a tiny fake WebP payload.
+// Stub worker that answers serially, `ms` per job, with a tiny fake WebP payload
+// (never answers while `state.hang` is set).
 const SLOW_WORKER = `(ms, state) => class {
 	constructor() { state.constructed++; this.busyUntil = 0; }
 	postMessage({ id }) {
+		if (state.hang) return;
 		if (state.throwNext) { state.throwNext = false; throw new DOMException('nope', 'DataCloneError'); }
 		const start = Math.max(Date.now(), this.busyUntil);
 		this.busyUntil = start + ms;
@@ -192,4 +171,23 @@ test('postMessage throwing rejects that job only and leaves the worker healthy',
 		return res;
 	}, { lib: LIB, slow: SLOW_WORKER });
 	expect(r).toMatchObject({ failed: 'DataCloneError', after: 'image/webp', constructed: 1, terminated: 0 });
+});
+
+test('proven pool: hung worker times out, job rejects, worker is replaced', async ({ page }) => {
+	const r = await page.evaluate(async ({ lib, slow }) => {
+		const state = { constructed: 0, terminated: 0, hang: false };
+		window.Worker = eval(slow)(0, state);
+		const { createConverter } = await import(lib);
+		const c = createConverter({ maxDim: 2460, poolSize: 1, jobTimeoutMs: 200 });
+		const f = new File([new Uint8Array(4)], 'a.png', { type: 'image/png' });
+		const first = (await c.convert(f, 82)).type;
+		state.hang = true;
+		const second = await c.convert(f, 82).then(() => 'resolved', (e) => e.message);
+		state.hang = false;
+		const third = (await c.convert(f, 82)).type;
+		const res = { first, second, third, ...state };
+		c.dispose();
+		return res;
+	}, { lib: LIB, slow: SLOW_WORKER });
+	expect(r).toEqual({ first: 'image/webp', second: 'worker timed out', third: 'image/webp', constructed: 2, terminated: 1, hang: false });
 });

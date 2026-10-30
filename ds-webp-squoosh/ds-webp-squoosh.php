@@ -92,13 +92,20 @@ final class DS_WebP_Squoosh_Studio {
 				'defaultQuality' => (int) apply_filters( 'ds_webp_default_quality', self::DEFAULT_QUALITY ),
 				'maxDim'         => (int) apply_filters( 'ds_webp_max_dim', self::MAX_DIM ),
 				'defaultBackup'  => (bool) apply_filters( 'ds_webp_keep_original', self::KEEP_ORIGINAL ),
-				'maxBackupBytes' => (int) apply_filters( 'ds_webp_backup_max_bytes', self::BACKUP_MAX_BYTES ),
+				'maxBackupBytes' => $this->backup_max_bytes(),
 				'webpSupported'  => (bool) wp_image_editor_supports( [ 'mime_type' => 'image/webp' ] ),
 			]
 		);
 
-		wp_print_inline_script_tag( 'window.__clientSideMediaProcessing = false;' );
+		if ( wp_image_editor_supports( [ 'mime_type' => 'image/webp' ] ) ) {
+			wp_print_inline_script_tag( 'window.__clientSideMediaProcessing = false;' );
+		}
 		wp_print_inline_script_tag( "window.DSWebPConfig = {$config};" );
+	}
+
+	/** Per-original backup cap in bytes (`ds_webp_backup_max_bytes` filter). */
+	private function backup_max_bytes() {
+		return max( 0, (int) apply_filters( 'ds_webp_backup_max_bytes', self::BACKUP_MAX_BYTES ) );
 	}
 
 	public function force_module_type( $tag, $handle ) {
@@ -159,6 +166,12 @@ final class DS_WebP_Squoosh_Studio {
 		if ( ! $attachment_id || empty( $_FILES['original_file'] ) || ! is_array( $_FILES['original_file'] ) ) {
 			wp_send_json_error( [ 'message' => 'Missing attachment ID or file payload.' ], 400 );
 		}
+		if ( 'attachment' !== get_post_type( $attachment_id ) || ! current_user_can( 'edit_post', $attachment_id ) ) {
+			wp_send_json_error( [ 'message' => 'Insufficient permissions for this attachment.' ], 403 );
+		}
+		if ( get_post_meta( $attachment_id, '_ds_original_backup', true ) ) {
+			wp_send_json_error( [ 'message' => 'This attachment already has a backup.' ], 409 );
+		}
 
 		$file = $_FILES['original_file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
 
@@ -168,7 +181,7 @@ final class DS_WebP_Squoosh_Studio {
 		if ( ! is_uploaded_file( $file['tmp_name'] ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
 			wp_send_json_error( [ 'message' => 'Invalid upload payload.' ], 400 );
 		}
-		if ( (int) $file['size'] > self::BACKUP_MAX_BYTES ) {
+		if ( (int) $file['size'] > $this->backup_max_bytes() ) {
 			wp_send_json_error( [ 'message' => 'Original exceeds the backup size cap.' ], 413 );
 		}
 		if ( is_multisite() && wp_is_large_network() && ! is_super_admin() ) {

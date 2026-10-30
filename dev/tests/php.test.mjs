@@ -21,17 +21,17 @@ let attachmentIds = [];
 
 const basic = () => ({ Authorization: 'Basic ' + Buffer.from(`admin:${appPass}`).toString('base64') });
 
-async function login() {
+async function login(log = 'admin', pwd = 'admin') {
   const res = await fetch(`${BASE_URL}/wp-login.php`, {
     method: 'POST',
     redirect: 'manual',
     headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: 'wordpress_test_cookie=WP%20Cookie%20check' },
-    body: new URLSearchParams({ log: 'admin', pwd: 'admin', 'wp-submit': 'Log In' }),
+    body: new URLSearchParams({ log, pwd, 'wp-submit': 'Log In' }),
   });
   return res.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
 }
 
-const adminHtml = (path) => fetch(`${BASE_URL}/wp-admin/${path}`, { headers: { cookie } }).then((r) => r.text());
+const adminHtml = (path, as = cookie) => fetch(`${BASE_URL}/wp-admin/${path}`, { headers: { cookie: as } }).then((r) => r.text());
 
 async function restUpload(fields) {
   const form = new FormData();
@@ -55,6 +55,7 @@ before(async () => {
 after(async () => {
   if (!up) return;
   await wp('option', 'delete', 'ds_dev_no_webp').catch(() => {});
+  await wp('user', 'delete', 'dsauthor', '--yes').catch(() => {});
   await wp('user', 'application-password', 'delete', 'admin', '--all').catch(() => {});
   if (attachmentIds.length) await wp('post', 'delete', ...attachmentIds.map(String), '--force').catch(() => {});
 });
@@ -105,15 +106,15 @@ test('studio.js is served with Cache-Control: no-cache and wasm as application/w
   assert.match(res.headers.get('cache-control') ?? '', /no-cache/);
 });
 
-async function vault(name, bytes, type) {
-  const nonce = readConfig(await adminHtml('upload.php')).nonce;
-  const id = await restUpload({});
+async function vault(name, bytes, type, { id, as = cookie } = {}) {
+  const nonce = readConfig(await adminHtml('upload.php', as)).nonce;
+  id ??= await restUpload({});
   const form = new FormData();
   form.set('action', 'ds_save_original_backup');
   form.set('nonce', nonce);
   form.set('attachment_id', String(id));
   form.set('original_file', new Blob([bytes], { type }), name);
-  const res = await fetch(`${BASE_URL}/wp-admin/admin-ajax.php`, { method: 'POST', headers: { cookie }, body: form });
+  const res = await fetch(`${BASE_URL}/wp-admin/admin-ajax.php`, { method: 'POST', headers: { cookie: as }, body: form });
   return res.status;
 }
 
@@ -121,4 +122,31 @@ test('vault accepts gif and bmp; rejects text renamed .jpg', opts, async () => {
   assert.equal(await vault('a.gif', STATIC_GIF, 'image/gif'), 200);
   assert.equal(await vault('a.bmp', BMP, 'image/bmp'), 200);
   assert.equal(await vault('a.jpg', Buffer.from('not an image'), 'image/jpeg'), 415);
+});
+
+test('vault: author cannot vault onto another user\'s attachment; non-attachment id refused; second backup 409', opts, async () => {
+  await wp('user', 'create', 'dsauthor', 'dsauthor@example.com', '--role=author', '--user_pass=dsauthor-pass-1').catch(() => {});
+  const author = await login('dsauthor', 'dsauthor-pass-1');
+  const adminsId = await restUpload({});
+  assert.equal(await vault('a.gif', STATIC_GIF, 'image/gif', { id: adminsId, as: author }), 403);
+  const postId = (await wp('post', 'list', '--post_type=post,page', '--posts_per_page=1', '--format=ids')).trim().split(/\s+/)[0]
+    || (await wp('post', 'create', '--post_title=ds-vault-probe', '--post_status=publish', '--porcelain')).trim();
+  assert.equal(await vault('a.gif', STATIC_GIF, 'image/gif', { id: Number(postId) }), 403);
+  assert.equal(await vault('a.gif', STATIC_GIF, 'image/gif', { id: adminsId }), 200);
+  assert.equal(await vault('a.gif', STATIC_GIF, 'image/gif', { id: adminsId }), 409);
+});
+
+test('config exposes maxBackupBytes and honours the ds_webp_backup_max_bytes default', opts, async () => {
+  assert.equal(readConfig(await adminHtml('upload.php')).maxBackupBytes, 20971520);
+});
+
+test('__clientSideMediaProcessing is printed only when the server supports WebP', opts, async () => {
+  await wp('option', 'delete', 'ds_dev_no_webp').catch(() => {});
+  assert.match(await adminHtml('upload.php'), /window\.__clientSideMediaProcessing = false;/);
+  await wp('option', 'update', 'ds_dev_no_webp', '1');
+  try {
+    assert.doesNotMatch(await adminHtml('upload.php'), /__clientSideMediaProcessing/);
+  } finally {
+    await wp('option', 'delete', 'ds_dev_no_webp');
+  }
 });

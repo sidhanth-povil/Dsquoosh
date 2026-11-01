@@ -2,18 +2,30 @@
 /**
  * Plugin Name: DS WebP Squoosh Studio
  * Description: Zero-server-load client-side WebP converter (Squoosh's libwebp WASM) for the WP admin. JPEG/PNG uploads are converted in the browser to WebP (quality 82% default, 2460px max edge) before they ever reach the server.
- * Version:     1.2.0
+ * Version:     1.2.1
+ * Requires at least: 6.4
  * Author:      DesignSuite Studio
  * License:     GPL-2.0-or-later
+ * Update URI:  https://github.com/sidhanth-povil/Dsquoosh
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+// Already running as an mu-plugin (loads first): skip, avoiding a duplicate class fatal mid-migration.
+// A constant, not class_exists(): PHP declares the class below at compile time, before this line runs.
+if ( defined( 'DS_WEBP_SQUOOSH_LOADED' ) ) {
+	return;
+}
+define( 'DS_WEBP_SQUOOSH_LOADED', true );
+
+require_once __DIR__ . '/updater.php';
+new DS_WebP_Squoosh_Updater( __FILE__ );
+
 final class DS_WebP_Squoosh_Studio {
 
-	const VERSION = '1.2.0';
+	const VERSION = '1.2.1';
 
 	/**
 	 * ---- SETTINGS (edit here; or override via the filters shown) ----------

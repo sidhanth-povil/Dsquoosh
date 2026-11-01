@@ -12,7 +12,7 @@
 
 ## What this is
 
-A WordPress **plugin** (DS WebP Squoosh Studio, v1.2.1) that converts images
+A WordPress **plugin** (DS WebP Squoosh Studio, v1.2.2) that converts images
 to WebP **in the browser before upload**, using Squoosh's libwebp WASM encoder
 (vendored `@jsquash/webp` 1.5.0) in a Web Worker pool. Zero server load. Only a
 WebP that is **smaller** than the original is uploaded — everything else passes

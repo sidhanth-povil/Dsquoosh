@@ -19,7 +19,7 @@ Only the WebP is uploaded — and only when it's actually smaller.
 ---
 
 > [!TIP]
-> **Try it in 30 seconds:** copy two files into `wp-content/mu-plugins/`, open
+> **Try it in 30 seconds:** upload [`ds-webp-squoosh.zip`](https://github.com/sidhanth-povil/Dsquoosh/releases/latest/download/ds-webp-squoosh.zip) under **Plugins → Add New → Upload Plugin**, activate, open
 > **Media → Add New**, look for the **"WebP converter" ⚡ badge** in the
 > bottom-right corner. That badge is your confirmation the plugin is live.
 
@@ -70,18 +70,20 @@ with Hostinger Cloud / LiteSpeed / Apache in mind).
 
 ## 🚀 Install
 
-1. Upload the **whole [`ds-webp-squoosh/`](./ds-webp-squoosh) folder** into
-   `wp-content/mu-plugins/` (create `mu-plugins/` next to `plugins/` if it
-   doesn't exist — mu-plugins need no activation). Keep `ds-webp-squoosh.php`
-   and `assets/` together: the WASM files must be served statically beside the
-   JS.
-2. <kbd>Required</kbd> — also copy **[`ds-webp-squoosh-loader.php`](./ds-webp-squoosh/ds-webp-squoosh-loader.php)**
-   **directly into `wp-content/mu-plugins/`, next to the folder, *not inside
-   it*:** WordPress ignores PHP files inside mu-plugin subfolders, so without
-   this loader nothing runs.
+1. Download **[`ds-webp-squoosh.zip`](https://github.com/sidhanth-povil/Dsquoosh/releases/latest/download/ds-webp-squoosh.zip)** from the latest release.
+2. **Plugins → Add New → Upload Plugin**, choose the zip, **Install Now**, **Activate**.
 3. **Verify:** open **Media → Add New** and confirm the 💡 badge from the callout above appears.
 
-Repeat on each site.
+Repeat on each site, once. After that every site **updates itself** from new
+GitHub releases (WordPress background updates, about every 12 hours; **Dashboard
+→ Updates → Check again** to pull one right away).
+
+> [!NOTE]
+> **Sites on the old mu-plugin install (1.2.0)** never receive updates. Install
+> the zip as above, then delete `mu-plugins/ds-webp-squoosh-loader.php` and
+> `mu-plugins/ds-webp-squoosh/`. Running both at once is safe: the mu copy wins
+> and the plugin copy stays idle. Details in the
+> [plugin readme](./ds-webp-squoosh/readme.md#moving-from-the-mu-plugin-install-120-and-older).
 
 > [!IMPORTANT]
 > If the badge is missing, the plugin is not loading — **don't test uploads
@@ -95,8 +97,8 @@ the original), but avoid them anyway:
 | ❌ Avoid | Why |
 | ------- | --- |
 | Testing uploads before the **"WebP converter" badge** is visible | The badge is the plugin's only "I'm alive" signal; without it, no conversion happens. |
-| Copying the loader **inside** the plugin folder | It must sit directly in `mu-plugins/`, one level up — WordPress never loads PHP from subfolders there. |
-| Installing it as a **normal (non-mu) plugin**, or renaming the folder | The shipped `.htaccess` cache rules and vault hardening assume this exact static layout. |
+| Staying on the **mu-plugin** install | WordPress never update-checks mu-plugins, so those sites stay on 1.2.0 forever. |
+| Renaming the `ds-webp-squoosh/` folder | Updates install into `ds-webp-squoosh/`; a renamed copy would end up as a second plugin. |
 | Splitting, renaming or removing anything under **`assets/`** | The encoder expects the `@jsquash` `.wasm` files beside its ESM module. |
 | Expecting changes without a cache clear after an upgrade | Apache/LiteSpeed hosts revalidate automatically via `assets/.htaccess`; on **nginx** hard-refresh wp-admin (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>). |
 | Transpiling or bundling the plugin | Plain ES modules enqueued via `wp_enqueue_script_module` (WP 6.6+) with a `type="module"` fallback (6.4–6.5). No tooling wanted on production sites. |
@@ -211,9 +213,9 @@ token).
 <summary><b>Badge missing on Media → Add New</b></summary>
 <br>
 
-The plugin isn't loading: check that the loader file is in `mu-plugins/`
-(install step 2) and the folder is complete. Don't test uploads until the
-badge shows.
+The plugin isn't loading: check it is **active** on **Plugins** (mu-plugin
+installs: the loader file must sit directly in `mu-plugins/`). Don't test
+uploads until the badge shows.
 
 </details>
 
@@ -247,7 +249,8 @@ Expected: settings live in each browser's localStorage, not the database.
 <summary><b>Uninstall</b></summary>
 <br>
 
-Delete both the folder and the loader file. Vaulted originals stay on disk by
+Deactivate and delete it on **Plugins** (mu-plugin installs: delete the folder
+and the loader file). Vaulted originals stay on disk by
 design; remove `uploads/ds-originals/` manually when you no longer need them.
 
 </details>
@@ -271,13 +274,32 @@ npm --prefix dev run e2e          # full Playwright suite (subset with: npm --pr
 
 </details>
 
+<details>
+<summary><b>Releasing a new version (ships to every site)</b></summary>
+<br>
+
+1. Bump `Version:` in the header **and** `const VERSION` in
+   [`ds-webp-squoosh.php`](./ds-webp-squoosh/ds-webp-squoosh.php), commit, push.
+2. Publish a GitHub release tagged `vX.Y.Z` (same number).
+   `gh release create v1.3.0 --title "…" --notes "…"`
+3. The [`Release zip`](./.github/workflows/release.yml) workflow checks that the
+   tag matches both version strings and attaches `ds-webp-squoosh.zip`. If they
+   don't match it fails and no site updates.
+4. Sites install it on their next update check (within about 12 hours).
+
+Want to try a build on one site first? Mark the release as a **pre-release**:
+sites only follow the latest full release. Install the zip by hand on the test
+site, then promote the release to "latest" when you're happy.
+
+</details>
+
 See [`docs/PROJECT.md`](./docs/PROJECT.md) for the full docs map.
 
 ## 📌 Version & license
 
 <div align="center">
 
-**v1.2.0** · GPL-2.0-or-later · WordPress mu-plugin by DesignSuite Studio
+**v1.2.1** · GPL-2.0-or-later · WordPress plugin by DesignSuite Studio
 <br><a href="https://github.com/sidhanth-povil/Dsquoosh"><strong>github.com/sidhanth-povil/Dsquoosh</strong></a> — all updates land here
 
 </div>

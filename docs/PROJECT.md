@@ -12,7 +12,7 @@
 
 ## What this is
 
-A WordPress **mu-plugin** (DS WebP Squoosh Studio, v1.2.0) that converts images
+A WordPress **plugin** (DS WebP Squoosh Studio, v1.2.1) that converts images
 to WebP **in the browser before upload**, using Squoosh's libwebp WASM encoder
 (vendored `@jsquash/webp` 1.5.0) in a Web Worker pool. Zero server load. Only a
 WebP that is **smaller** than the original is uploaded — everything else passes
@@ -27,7 +27,7 @@ is the full plugin documentation.
 
 ```
 ds-webp-squoosh/              the shipped plugin (static, no build step)
-  ds-webp-squoosh-loader.php  root loader file that must sit in mu-plugins/
+  ds-webp-squoosh-loader.php  legacy mu-plugin install only: loader that sits in mu-plugins/ (not in the release zip)
   ds-webp-squoosh.php         plugin bootstrap, AJAX vault endpoint, meta, filters
   assets/studio.js            ES-module entry (no bundler)
   assets/lib/                 13 focused modules (settings, classify, pipeline,

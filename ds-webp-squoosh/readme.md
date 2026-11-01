@@ -1,4 +1,4 @@
-# DS WebP Squoosh Studio — v1.2.0
+# DS WebP Squoosh Studio — v1.2.1
 
 Every normal image uploaded in wp-admin becomes a WebP **in the uploader's
 browser**, with **zero server load**. Conversion uses Squoosh's own libwebp WASM
@@ -19,23 +19,45 @@ upload and shows what happened to each file afterwards.
 
 ## Install
 
-1. Upload the **whole `ds-webp-squoosh/` folder** into `wp-content/mu-plugins/`
-   (create `mu-plugins/` next to `plugins/` if it doesn't exist; mu-plugins need
-   no activation). Keep `ds-webp-squoosh.php` and `assets/` together: the WASM
-   files must be served statically beside the JS.
-   FileZilla path: `public_html/wp-content/mu-plugins/ds-webp-squoosh/`
-2. **Required:** also copy **`ds-webp-squoosh-loader.php`** directly into
-   `wp-content/mu-plugins/`, next to the folder, not inside it. WordPress ignores
-   PHP files inside mu-plugin subfolders, so without the loader nothing runs.
+1. Download **[`ds-webp-squoosh.zip`](https://github.com/sidhanth-povil/Dsquoosh/releases/latest/download/ds-webp-squoosh.zip)**
+   from the latest release.
+2. **Plugins → Add New → Upload Plugin**, choose the zip, **Install Now**, then
+   **Activate**.
 3. **Verify:** open **Media → Add New**. A **"WebP converter"** badge appears at
    the bottom-right of the screen. If it is missing the plugin is not loading
    yet; don't test uploads until it shows.
 
-Repeat on each site.
+Repeat on each site. That's the last manual step: from then on new versions
+install themselves.
 
-### Upgrading from 1.1.x
+### Automatic updates
 
-- Replace the `ds-webp-squoosh/` folder **and** the loader file.
+- Each site asks GitHub for the latest release during WordPress's normal update
+  check (about every 12 hours; the answer is cached for 6) and installs a newer
+  version in the background. Auto-updates are always on for this plugin.
+- To pick up a release right away: **Dashboard → Updates → Check again**, then
+  update.
+- The site must reach `api.github.com` and `github.com`. With
+  `AUTOMATIC_UPDATER_DISABLED` the update still shows on **Plugins**, ready for
+  one click; `DISALLOW_FILE_MODS` blocks plugin updates entirely.
+- Keep the folder name `ds-webp-squoosh/`: updates install into that folder.
+
+### Moving from the mu-plugin install (1.2.0 and older)
+
+mu-plugins never receive updates, so switch each site once:
+
+1. Install and activate the zip as above. While the mu-plugin copy is still
+   there it keeps running and the new copy stays idle, so nothing breaks.
+2. Delete `wp-content/mu-plugins/ds-webp-squoosh-loader.php` and the
+   `wp-content/mu-plugins/ds-webp-squoosh/` folder.
+3. Purge caches, hard-refresh wp-admin and check the badge.
+
+Settings (browser storage), conversion data and vaulted originals are kept.
+The mu-plugin layout (folder plus `ds-webp-squoosh-loader.php` in
+`mu-plugins/`) still works, but it never updates automatically.
+
+### After any upgrade
+
 - Settings are kept: they live in each person's browser storage.
 - **LiteSpeed / Apache (Hostinger):** `assets/.htaccess` makes browsers
   revalidate JS and WASM, so the new version is picked up automatically.
@@ -153,8 +175,8 @@ and `_ds_original_backup` (vault path, only when a copy was kept).
 
 ## Uninstall
 
-Delete the `ds-webp-squoosh/` folder and `ds-webp-squoosh-loader.php` (if either
-is missing, nothing loads). Vaulted originals stay on disk by design; remove
+Deactivate and delete the plugin on **Plugins** (mu-plugin installs: delete the
+`ds-webp-squoosh/` folder and `ds-webp-squoosh-loader.php`). Vaulted originals stay on disk by design; remove
 `uploads/ds-originals/` manually when you no longer need them.
 
 ## Developer notes

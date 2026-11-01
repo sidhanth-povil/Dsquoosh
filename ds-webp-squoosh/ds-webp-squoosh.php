@@ -2,7 +2,7 @@
 /**
  * Plugin Name: DS WebP Squoosh Studio
  * Description: Zero-server-load client-side WebP converter (Squoosh's libwebp WASM) for the WP admin. JPEG/PNG uploads are converted in the browser to WebP (quality 82% default, 2460px max edge) before they ever reach the server.
- * Version:     1.2.1
+ * Version:     1.2.2
  * Requires at least: 6.4
  * Author:      DesignSuite Studio
  * License:     GPL-2.0-or-later
@@ -25,7 +25,7 @@ new DS_WebP_Squoosh_Updater( __FILE__ );
 
 final class DS_WebP_Squoosh_Studio {
 
-	const VERSION = '1.2.1';
+	const VERSION = '1.2.2';
 
 	/**
 	 * ---- SETTINGS (edit here; or override via the filters shown) ----------
@@ -40,6 +40,8 @@ final class DS_WebP_Squoosh_Studio {
 	const VAULT_EXTENSIONS  = [ 'jpg', 'jpeg', 'png', 'gif', 'bmp', 'tif', 'tiff', 'heic', 'heif' ];
 	const VAULT_MIMES       = [ 'image/jpeg', 'image/png', 'image/gif', 'image/bmp', 'image/x-ms-bmp', 'image/tiff' ];
 	const HEIC_EXTENSIONS   = [ 'heic', 'heif' ];
+	const HEIF_BRANDS       = [ 'heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1' ];
+	const FTYP_READ_BYTES   = 64; // Enough for the ftyp box's major + compatible brands.
 	const MODULE_MIN_WP     = '6.6'; // Script modules in wp-admin are only reliable from 6.6.
 
 	private $vault_token = null;
@@ -132,6 +134,10 @@ final class DS_WebP_Squoosh_Studio {
 	 * (only for files our JS intercepted).
 	 */
 	public function save_compression_metadata( $attachment_id ) {
+		// add_attachment also fires for other plugins' front-end uploads: only trust wp-admin uploaders.
+		if ( ! current_user_can( 'upload_files' ) ) {
+			return;
+		}
 		$this->store_compression_meta(
 			(int) $attachment_id,
 			$_REQUEST['_ds_webp_quality'] ?? null, // phpcs:ignore WordPress.Security.NonceVerification.Recommended
@@ -205,6 +211,10 @@ final class DS_WebP_Squoosh_Studio {
 		if ( ! in_array( $ext, self::VAULT_EXTENSIONS, true ) ) {
 			wp_send_json_error( [ 'message' => 'This image format cannot be vaulted.' ], 415 );
 		}
+		// Content check on the temp upload, so a rejected payload never lands in the vault.
+		if ( ! $this->is_vaultable_image( $file['tmp_name'], $ext ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+			wp_send_json_error( [ 'message' => 'Payload is not a valid image.' ], 415 );
+		}
 
 		$upload_dir = wp_upload_dir();
 		$vault_dir  = trailingslashit( $upload_dir['basedir'] ) . self::VAULT_FOLDER;
@@ -225,20 +235,36 @@ final class DS_WebP_Squoosh_Studio {
 		// FS_CHMOD_FILE only exists once WP_Filesystem() ran — never in admin-ajax.
 		@chmod( $target_path, defined( 'FS_CHMOD_FILE' ) ? FS_CHMOD_FILE : 0644 );
 
-		// Integrity check after the move: HEIC/HEIF are not decodable by getimagesize
-		// (extension whitelist only); everything else must decode as an allowed image.
-		if ( ! in_array( $ext, self::HEIC_EXTENSIONS, true ) ) {
-			$check = function_exists( 'getimagesize' ) ? @getimagesize( $target_path ) : false;
-			if ( ! $check || empty( $check['mime'] ) || ! in_array( $check['mime'], self::VAULT_MIMES, true ) ) {
-				wp_delete_file( $target_path );
-				wp_send_json_error( [ 'message' => 'Payload is not a valid image.' ], 415 );
-			}
-		}
-
 		$relative = ltrim( str_replace( trailingslashit( $upload_dir['basedir'] ), '', $target_path ), '/' );
 		update_post_meta( $attachment_id, '_ds_original_backup', $relative );
 
 		wp_send_json_success( [ 'backup_path' => $relative ] );
+	}
+
+	/**
+	 * HEIC/HEIF: getimagesize() can't read them, so require an ISO-BMFF `ftyp`
+	 * box with a HEIF brand. Everything else must decode as an allowed image.
+	 */
+	private function is_vaultable_image( $path, $ext ) {
+		if ( in_array( $ext, self::HEIC_EXTENSIONS, true ) ) {
+			return $this->has_heif_signature( $path );
+		}
+		$check = function_exists( 'getimagesize' ) ? @getimagesize( $path ) : false;
+		return $check && ! empty( $check['mime'] ) && in_array( $check['mime'], self::VAULT_MIMES, true );
+	}
+
+	/**
+	 * `ftyp` box: size (4) · 'ftyp' · major brand (4) · minor version (4) · compatible brands (4 each).
+	 * ponytail: header check only (like getimagesize); a full HEIF parse needs a decoder.
+	 */
+	private function has_heif_signature( $path ) {
+		$head = (string) @file_get_contents( $path, false, null, 0, self::FTYP_READ_BYTES ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		if ( strlen( $head ) < 16 || 'ftyp' !== substr( $head, 4, 4 ) ) {
+			return false;
+		}
+		$box_size = min( strlen( $head ), unpack( 'N', $head )[1] );
+		$brands   = array_merge( [ substr( $head, 8, 4 ) ], str_split( substr( $head, 16, max( 0, $box_size - 16 ) ), 4 ) );
+		return (bool) array_intersect( $brands, self::HEIF_BRANDS );
 	}
 
 	/**

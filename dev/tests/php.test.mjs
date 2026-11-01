@@ -124,6 +124,34 @@ test('vault accepts gif and bmp; rejects text renamed .jpg', opts, async () => {
   assert.equal(await vault('a.jpg', Buffer.from('not an image'), 'image/jpeg'), 415);
 });
 
+test('add_attachment stores _ds request fields only for users who can upload_files', opts, async () => {
+  const insert = (asUser) => wp('eval', `$_REQUEST['_ds_webp_quality'] = '70'; $_REQUEST['_ds_orig_size'] = '1234';
+    $id = wp_insert_attachment( [ 'post_title' => 'ds-meta-probe', 'post_mime_type' => 'image/webp', 'post_status' => 'inherit' ] );
+    echo $id;`, ...(asUser ? ['--user=admin'] : []));
+  const asAdmin = Number(await insert(true));
+  const anonymous = Number(await insert(false));
+  attachmentIds.push(asAdmin, anonymous);
+  assert.equal(await meta(asAdmin, '_ds_webp_quality'), '70');
+  assert.equal(await meta(anonymous, '_ds_webp_quality'), '');
+  assert.equal(await meta(anonymous, '_ds_orig_size'), '');
+});
+
+// ISO-BMFF `ftyp` box: size, 'ftyp', major brand, minor version, compatible brands.
+const ftyp = (major, ...compatible) => {
+  const brands = [major, '\0\0\0\0', ...compatible].join('');
+  const box = Buffer.alloc(8 + brands.length);
+  box.writeUInt32BE(box.length, 0);
+  box.write('ftyp' + brands, 4, 'latin1');
+  return box;
+};
+
+test('vault accepts real HEIC/HEIF headers; rejects other bytes renamed .heic/.heif', opts, async () => {
+  assert.equal(await vault('a.heic', ftyp('heic', 'mif1', 'heic'), 'image/heic'), 200);
+  assert.equal(await vault('a.heif', ftyp('msf1', 'mif1'), 'image/heif'), 200);
+  assert.equal(await vault('a.heic', Buffer.from('<?php echo "not an image";'), 'image/heic'), 415);
+  assert.equal(await vault('a.heif', ftyp('isom', 'mp41'), 'image/heif'), 415); // MP4, not HEIF
+});
+
 test('vault: author cannot vault onto another user\'s attachment; non-attachment id refused; second backup 409', opts, async () => {
   await wp('user', 'create', 'dsauthor', 'dsauthor@example.com', '--role=author', '--user_pass=dsauthor-pass-1').catch(() => {});
   const author = await login('dsauthor', 'dsauthor-pass-1');

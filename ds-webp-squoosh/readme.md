@@ -1,4 +1,4 @@
-# DS WebP Squoosh Studio — v1.2.1
+# DS WebP Squoosh Studio — v1.2.2
 
 Every normal image uploaded in wp-admin becomes a WebP **in the uploader's
 browser**, with **zero server load**. Conversion uses Squoosh's own libwebp WASM
@@ -64,7 +64,8 @@ The mu-plugin layout (folder plus `ds-webp-squoosh-loader.php` in
 - **nginx hosts** ignore `.htaccess`: hard-refresh wp-admin (Ctrl/Cmd+Shift+R)
   once after upgrading.
 - The vault's `.htaccess` deny (see Keep original copy) also does not apply on
-  nginx. Protect `wp-content/uploads/ds-originals/` in your server config.
+  nginx. Protect `wp-content/uploads/ds-originals/` in your server config (rule
+  under Keep original copy).
 
 ## Where it works
 
@@ -146,8 +147,14 @@ TIFF, HEIC; up to 20 MB) is vaulted to
 `wp-content/uploads/ds-originals/{random-token}/YYYY/MM/` and linked to the
 attachment with `_ds_original_backup` post meta. Vault files are deleted when the
 attachment is deleted. The vault folder gets an `.htaccess` deny and an
-`index.php`; on nginx protect it in the server config. To fetch an original, use
-SFTP with the path stored in that post meta.
+`index.php`. **nginx ignores both**, so add this to the site's `server` block and
+reload nginx:
+
+```nginx
+location ^~ /wp-content/uploads/ds-originals/ { deny all; return 403; }
+```
+
+To fetch an original, use SFTP with the path stored in that post meta.
 
 ## Attachment details panel
 

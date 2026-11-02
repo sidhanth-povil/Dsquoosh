@@ -1,0 +1,10 @@
+# OS / editor
+.DS_Store
+
+# Local tooling state (never ship inside the plugin zip)
+.claude/
+.cloud-attachments/
+
+# Personal drafts and chat scratch files (docs/PROJECT.md: never commit these)
+gemini-chat.txt
+linkedin-article*.md

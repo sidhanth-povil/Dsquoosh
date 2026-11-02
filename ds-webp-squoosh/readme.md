@@ -198,6 +198,7 @@ Deactivate and delete the plugin on **Plugins** (mu-plugin installs: delete the
   | `settings.js` | Settings store, presets, localStorage persistence |
   | `classify.js` | Decide convert / pass through (animated GIF detection, web formats, decodability) |
   | `pipeline.js` | Per-file flow: classify, convert, size check, fall back to original |
+  | `limiter.js` | Caps files processed at once (3); the rest show "Waiting…" |
   | `convert.js`, `convert-worker.js` | Worker pool (OffscreenCanvas + libwebp), main-thread fallback |
   | `plupload-adapter.js` | Hooks core's plupload uploaders (Add New, Library, media popups) |
   | `rest-adapter.js` | `apiFetch` middleware for block/site editor uploads (`POST /wp/v2/media`) |
@@ -205,6 +206,14 @@ Deactivate and delete the plugin on **Plugins** (mu-plugin installs: delete the
   | `jobs.js` | Observable list of per-file jobs |
   | `panel.js`, `panel-rows.js`, `panel-settings.js` | Floating panel, progress rows and strings, settings form; editor toolbar button |
   | `preview-modal.js` | "Preview each image" modal |
+
+- **Server side (PHP):**
+
+  | File | Role |
+  | ---- | ---- |
+  | `ds-webp-squoosh.php` | Bootstrap and duplicate-load guard, asset enqueue + inline config, compression meta, vault AJAX endpoint (content check before the move), attachment-details row |
+  | `updater.php` | Self-updater: answers core's `update_plugins_github.com` hook (`Update URI` header) from the cached latest GitHub release; forces auto-updates for this plugin |
+  | `ds-webp-squoosh-loader.php` | Legacy mu-plugin installs only; not in the release zip |
 
 - `assets/vendor/@jsquash/webp/` is the Apache-2.0 jSquash repackaging of
   Squoosh's libwebp codecs (v1.5.0, `wasm-feature-detect` vendored as

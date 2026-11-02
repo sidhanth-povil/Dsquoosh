@@ -70,6 +70,7 @@ The WebP is uploaded first; WordPress then builds sub-sizes from it as usual.
 | [`dev/`](./dev) | Dev-only test harness: Docker WordPress, unit tests, Playwright e2e. Never ships. |
 | [`docs/`](./docs) | Design docs, implementation plans and the [project brief](./docs/PROJECT.md). |
 | [`.github/workflows/release.yml`](./.github/workflows/release.yml) | Builds and attaches `ds-webp-squoosh.zip` to every published release. |
+| [`SECURITY.md`](./SECURITY.md) | How to report a vulnerability privately, and how releases are protected. |
 
 **Requirements:** WordPress **6.4+** (tested on 6.5 and latest) · current
 Chromium, Firefox or Safari · any host with standard uploads handling (built
@@ -306,9 +307,11 @@ npm --prefix dev run e2e          # full Playwright suite (subset with: npm --pr
 <br>
 
 1. Bump `Version:` in the header **and** `const VERSION` in
-   [`ds-webp-squoosh.php`](./ds-webp-squoosh/ds-webp-squoosh.php), commit, push.
-2. Publish a GitHub release tagged `vX.Y.Z` (same number).
-   `gh release create v1.3.0 --title "…" --notes "…"`
+   [`ds-webp-squoosh.php`](./ds-webp-squoosh/ds-webp-squoosh.php) on a branch,
+   open a PR and merge it (`main` only accepts pull requests).
+2. Publish a GitHub release tagged `vX.Y.Z` (same number) from `main`. Only
+   repo admins can create `v*` tags.
+   `gh release create v1.3.0 --target main --title "…" --notes "…"`
 3. The [`Release zip`](./.github/workflows/release.yml) workflow checks that the
    tag matches both version strings and attaches `ds-webp-squoosh.zip`. If they
    don't match it fails and no site updates.
@@ -341,6 +344,10 @@ See [`docs/PROJECT.md`](./docs/PROJECT.md) for the full docs map.
 - Concurrency limit, per-attachment checks on the vault endpoint, accessibility pass.
 
 All releases: [github.com/sidhanth-povil/Dsquoosh/releases](https://github.com/sidhanth-povil/Dsquoosh/releases)
+
+> [!CAUTION]
+> Found a security issue? Please report it privately, not as a public issue.
+> See [`SECURITY.md`](./SECURITY.md).
 
 ## 📌 Version & license
 

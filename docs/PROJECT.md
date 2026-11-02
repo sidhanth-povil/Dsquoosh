@@ -1,7 +1,7 @@
 # Dsquoosh — project brief
 
 > Living document for this repo. Update it when status, layout or conventions
-> change. (Last reviewed: 2026-11-01, after the v1.2.2 release.)
+> change. (Last reviewed: 2026-11-02 — v1.2.2 verified, 64/64 tests green.)
 
 ## Where this project lives
 
@@ -88,18 +88,27 @@ after a failure) and only accepts this repo's `ds-webp-squoosh.zip`.
 5. Test risky builds as a **pre-release** first: sites only follow the latest
    full release.
 
-## Status (as of 2026-11-01)
+## Status (as of 2026-11-02)
 
 - **v1.2.2 released** (security hardening from an audit of 1.2.1): HEIF
   signature check, validate-before-move in the vault, `upload_files` guard on
   `add_attachment` meta, checkout pinned by SHA, dev harness bound to
   `127.0.0.1`, nginx vault rule documented.
 - v1.2.1: regular-plugin packaging + GitHub self-updater + release workflow.
+- Releases published and tagged: `v1.2.0` (last mu-plugin build), `v1.2.1`,
+  `v1.2.2` — the same version lives in the `Version:` header, `const VERSION`
+  and the loader.
 - Repo hardening: `main` and `v*` tag rulesets, private vulnerability
   reporting, secret scanning + push protection.
-- Tests: **64 unit/integration** (PHP ones need the Docker harness up) and
-  **43 Playwright e2e**, all passing. The Elementor spec can flake once on a
-  cold editor right after the container is recreated.
+- Tests: **64 unit/integration** and **43 Playwright e2e**. Re-verified
+  2026-11-02 with the harness up: **64/64 pass, 0 skipped** (the PHP
+  integration tests skip themselves while `localhost:8089` is down). E2E last
+  ran green 2026-11-01; the Elementor spec can flake once on a cold editor
+  right after the container is recreated.
+- Docs: root readme, plugin readme, this brief, `SECURITY.md` and
+  `dev/README.md` are current for 1.2.x. That refresh (plus the `.gitignore`
+  additions) lives on branch `docs/post-1.2.2` until it merges into `main` —
+  GitHub shows the pre-1.2.2 brief until then.
 - **Open:** direct drops onto the Elementor canvas aren't converted yet; sites
   still on the 1.2.0 mu-plugin install must be migrated by hand once; enable
   2FA on the GitHub account that owns releases.
@@ -112,8 +121,9 @@ after a failure) and only accepts this repo's `ds-webp-squoosh.zip`.
 - Never rename the `ds-webp-squoosh/` folder: updates install into it.
 - Never publish a release without green tests — it auto-installs everywhere.
 - Never ship, deploy or commit the `dev/` folder contents, `.auth/`
-  storageState, screenshots, or chat/draft scratch files (root `.gitignore`
-  covers the known ones).
+  storageState, screenshots, or chat/draft scratch files. The root
+  `.gitignore` covers `.DS_Store`, `.claude/`, `.cloud-attachments/`,
+  `gemini-chat.txt` and `linkedin-article*.md`.
 - Never break uploads: any conversion path must fall back to the original on
   failure (this is the project's prime invariant).
 - No expando properties on `File` objects — use WeakMaps; no `console.log`
